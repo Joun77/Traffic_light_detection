@@ -1,0 +1,17 @@
+{
+  "roi_y": 2760,
+  "display_y": 647,
+  "scale": 0.234375,
+  "traffic_light_box_display": [
+    295,
+    520,
+    342,
+    666
+  ],
+  "traffic_light_box": [
+    1258,
+    2218,
+    1459,
+    2841
+  ]
+}
