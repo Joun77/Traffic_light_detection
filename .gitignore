@@ -105,3 +105,6 @@ IMG_9582.MOV
 *.mp4
 *.MOV
 *.avi
+
+# Temporary drive upload folder
+.tmp.driveupload/
