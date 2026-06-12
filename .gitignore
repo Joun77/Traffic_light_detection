@@ -99,3 +99,9 @@ ENV/
 
 # mypy
 .mypy_cache/
+
+# Large video files
+IMG_9582.MOV
+*.mp4
+*.MOV
+*.avi
