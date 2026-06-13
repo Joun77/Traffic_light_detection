@@ -1,14 +1,6 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
-# vehicle_detection_main.py
-# ระบบตรวจจับรถและตรวจจับการฝ่าไฟแดง
-# ใช้ YOLO26 (Ultralytics) + Video Stabilization
-#
-# วิธีรัน:
-#   python vehicle_detection_main.py imshow   <- แสดงผลหน้าจอ
-#   python vehicle_detection_main.py imwrite  <- บันทึกไฟล์วิดีโอ
-#
-# กด Q เพื่อหยุดโปรแกรม
+# vehicle_detection_main.py (All Features: Multi-Direction, Violations, and Visual ROI)
 
 import cv2
 import numpy as np
@@ -18,337 +10,140 @@ import os
 import json
 import argparse
 from ultralytics import YOLO
-from utils.video_stabilizer import VideoStabilizer
 
 # ============================================================
 # CONFIG
 # ============================================================
-VIDEO_SOURCE   = 'IMG_9582.MOV'
-MODEL_NAME     = 'yolo26s.pt'          # nano=เร็ว, small=สมดุล, medium=แม่น
-CONFIDENCE     = 0.35                   # ค่า confidence ขั้นต่ำ
-ROI_CONFIG     = 'roi_config.json'
+VIDEO_SOURCE      = 'IMG_9582.MOV'
+VEHICLE_MODEL     = 'yolo26s.pt'
+TRAFFIC_MODEL     = 'traffic_light_results/weights/best.pt'
+CONFIDENCE        = 0.35
+ROI_CONFIG        = 'roi_config.json'
 
-# COCO class IDs สำหรับยานพาหนะ
-VEHICLE_CLASSES = {
-    2:  'car',
-    3:  'motorcycle',
-    5:  'bus',
-    7:  'truck',
-}
+VEHICLE_CLASSES = {2: 'car', 3: 'motorcycle', 5: 'bus', 7: 'truck'}
 
-# ============================================================
-# LOAD ROI CONFIG
-# ============================================================
-ROI_Y  = 1100
-TL_BOX = None   # traffic light bounding box (x1,y1,x2,y2)
-
+# LOAD CONFIG
+ROI_Y = None; ROI_X = None; TL_BOX = None; VEH_ZONE = None
 if os.path.exists(ROI_CONFIG):
     with open(ROI_CONFIG) as f:
         cfg = json.load(f)
-    ROI_Y  = cfg.get('roi_y', ROI_Y)
-    TL_BOX = cfg.get('traffic_light_box', None)
-    print(f"[CONFIG] ROI y={ROI_Y}  |  Traffic Light box={TL_BOX}")
+    ROI_Y  = cfg.get('roi_y')
+    ROI_X  = cfg.get('roi_x')
+    TL_BOX = cfg.get('traffic_light_box')
+    VEH_ZONE = cfg.get('vehicle_zone')
+    print(f"[CONFIG] Loaded All ROI Settings")
 else:
-    print("[CONFIG] ไม่พบ roi_config.json — ใช้ค่า default")
-    print("         รัน: python set_roi.py เพื่อกำหนดตำแหน่ง")
+    print("[ERROR] No roi_config.json found.")
 
-# ============================================================
-# TRAFFIC LIGHT DETECTION
-# ============================================================
-_light_history = []
+def is_inside(box, area):
+    if area is None: return True
+    bx1, by1, bx2, by2 = box
+    cx, cy = (bx1 + bx2) // 2, (by1 + by2) // 2
+    ax1, ay1, ax2, ay2 = area
+    return (ax1 <= cx <= ax2) and (ay1 <= cy <= ay2)
 
-def detect_traffic_light(frame, box):
-    """
-    ตรวจสีไฟจราจรด้วย 2 วิธีรวมกัน:
-    1) แบ่งกรอบเป็น 3 ส่วน (บน=แดง / กลาง=เหลือง / ล่าง=เขียว)
-       แล้วดูว่าส่วนไหนสว่างที่สุด
-    2) ยืนยันด้วยสี HSV
-    """
-    x1, y1, x2, y2 = [int(v) for v in box]
-    roi = frame[y1:y2, x1:x2]
-    if roi.size == 0:
-        return 'unknown'
-
-    h = roi.shape[0]
-    mg = max(1, h // 10)
-    top = roi[mg        : h//3 - mg,    :]
-    mid = roi[h//3 + mg : 2*h//3 - mg, :]
-    bot = roi[2*h//3+mg : h - mg,       :]
-
-    def bright(r):
-        return float(np.mean(cv2.cvtColor(r, cv2.COLOR_BGR2GRAY))) if r.size > 0 else 0
-
-    bt, bm, bb = bright(top), bright(mid), bright(bot)
-    best = max(bt, bm, bb)
-    if best < 30:
-        return 'unknown'
-
-    ratio = 1.20
-    if bt > bm * ratio and bt > bb * ratio:
-        pos, region = 'red',    top
-    elif bb > bt * ratio and bb > bm * ratio:
-        pos, region = 'green',  bot
-    elif bm > bt * ratio and bm > bb * ratio:
-        pos, region = 'yellow', mid
-    else:
-        return 'unknown'
-
-    # ยืนยัน HSV
-    hsv = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
-    area = region.shape[0] * region.shape[1]
-    if pos == 'red':
-        ok = (cv2.countNonZero(cv2.inRange(hsv, np.array([0,80,80]),   np.array([15,255,255]))) +
-              cv2.countNonZero(cv2.inRange(hsv, np.array([155,80,80]), np.array([180,255,255])))) > area * 0.03
-    elif pos == 'green':
-        ok = cv2.countNonZero(cv2.inRange(hsv, np.array([35,50,50]),   np.array([95,255,255]))) > area * 0.03
-    else:
-        ok = cv2.countNonZero(cv2.inRange(hsv, np.array([15,80,80]),   np.array([40,255,255]))) > area * 0.03
-
-    return pos if ok else 'unknown'
-
-
-def get_stable_light(frame, box, history_size=5):
-    """Majority voting จาก N frame ล่าสุด"""
-    global _light_history
-    _light_history.append(detect_traffic_light(frame, box))
-    if len(_light_history) > history_size:
-        _light_history.pop(0)
-    counts = {}
-    for r in _light_history:
-        if r != 'unknown':
-            counts[r] = counts.get(r, 0) + 1
-    return max(counts, key=counts.get) if counts else 'unknown'
-
-
-# ============================================================
-# DRAW HELPERS
-# ============================================================
-LIGHT_COLOR_MAP = {
-    'red':     (0,   0,   255),
-    'green':   (0,   255, 0),
-    'yellow':  (0,   255, 255),
-    'unknown': (128, 128, 128),
-}
-
-def draw_traffic_light_indicator(frame, light, pos=(None, 50)):
-    h, w = frame.shape[:2]
-    cx = w - 70 if pos[0] is None else pos[0]
-    cy = pos[1]
-    color = LIGHT_COLOR_MAP.get(light, (128, 128, 128))
-    cv2.circle(frame, (cx, cy), 28, (50, 50, 50), -1)
-    cv2.circle(frame, (cx, cy), 25, color, -1)
-    cv2.putText(frame, light.upper(), (cx - 35, cy + 45),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 2)
-
-
-def draw_roi_line(frame, y, roi_color):
-    h, w = frame.shape[:2]
-    cv2.line(frame, (0, y), (w, y), roi_color, 4)
-    cv2.putText(frame, 'ROI', (10, y - 8),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, roi_color, 2)
-
-
-# ============================================================
-# MAIN DETECTION FUNCTION
-# ============================================================
-def run(command):
-    # โหลดโมเดล YOLO26
-    print(f"[YOLO] กำลังโหลดโมเดล {MODEL_NAME} ...")
-    model = YOLO(MODEL_NAME)
-    print("[YOLO] โหลดสำเร็จ!")
-
-    # เปิดวิดีโอ
+def run():
+    print("[YOLO] Loading Models...")
+    v_model = YOLO(VEHICLE_MODEL)
+    t_model = YOLO(TRAFFIC_MODEL)
+    
     cap = cv2.VideoCapture(VIDEO_SOURCE)
-    if not cap.isOpened():
-        print(f"Error: ไม่พบวิดีโอ '{VIDEO_SOURCE}'")
-        return
-
     width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fps    = int(cap.get(cv2.CAP_PROP_FPS)) or 30
-
-    print(f"[VIDEO] {width}x{height} @ {fps}fps")
-
-    # Output video
-    writer = None
-    if command == 'imwrite':
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out_path = VIDEO_SOURCE.rsplit('.', 1)[0] + '_output.mp4'
-        writer = cv2.VideoWriter(out_path, fourcc, fps, (width, height))
-        print(f"[OUTPUT] บันทึกไปที่ {out_path}")
-
-    # CSV
-    with open('traffic_measurement.csv', 'w', newline='') as f:
-        csv.writer(f).writerow(['Time', 'Vehicle#', 'Type', 'Light', 'Violation'])
-    with open('violations.csv', 'w', newline='') as f:
-        csv.writer(f).writerow(['Time', 'Vehicle#', 'Type', 'Light'])
-
-    # ตัวแปร
-    stabilizer     = VideoStabilizer(smoothing_radius=30)
-    total_vehicles = 0
-    violations     = 0
-    current_light  = 'unknown'
-    frame_count    = 0
-
-    # track ว่า vehicle ID ไหนผ่านเส้น ROI ไปแล้ว (ป้องกันนับซ้ำ)
-    crossed_ids = set()
-
-    print("[START] กด Q เพื่อหยุด")
-    print("=" * 50)
+    
+    pos_history = {}
+    tracked_y = set(); tracked_down = set(); tracked_x = set()
+    violated_ids = set()
+    
+    cnt_forward = 0; cnt_downward = 0; cnt_left = 0; violations = 0
+    current_light = 'unknown'
 
     while cap.isOpened():
         ret, frame = cap.read()
-        if not ret:
-            print("จบวิดีโอ")
-            break
+        if not ret: break
 
-        frame_count += 1
+        # 1. ตรวจจับไฟจราจร
+        t_results = t_model(frame, conf=0.4, verbose=False)[0]
+        if len(t_results.boxes) > 0:
+            for box in t_results.boxes:
+                b = list(map(int, box.xyxy[0]))
+                if is_inside(b, TL_BOX):
+                    current_light = t_model.names[int(box.cls[0])]
+                    # วาดกรอบส่องไฟ
+                    cv2.rectangle(frame, (b[0], b[1]), (b[2], b[3]), (255, 255, 255), 2)
+                    break
 
-        # --- Video Stabilization ---
-        frame = stabilizer.stabilize(frame)
+        # 2. ตรวจจับรถ
+        v_results = v_model.track(frame, persist=True, conf=CONFIDENCE, verbose=False)[0]
+        if v_results.boxes.id is not None:
+            boxes = v_results.boxes.xyxy.cpu().numpy()
+            ids = v_results.boxes.id.cpu().numpy().astype(int)
+            clss = v_results.boxes.cls.cpu().numpy().astype(int)
 
-        # --- Traffic Light Detection ---
+            for box, track_id, cls in zip(boxes, ids, clss):
+                if cls not in VEHICLE_CLASSES: continue
+                if not is_inside(list(map(int, box)), VEH_ZONE): continue
+                
+                x1, y1, x2, y2 = map(int, box)
+                cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+                
+                # ทิศทาง
+                direction = "Static"
+                if track_id in pos_history:
+                    prev_cx, prev_cy = pos_history[track_id]
+                    dy, dx = cy - prev_cy, cx - prev_cx
+                    if abs(dy) > abs(dx): direction = "Down" if dy > 0 else "Up"
+                    else: direction = "Right" if dx > 0 else "Left"
+                pos_history[track_id] = (cx, cy)
+
+                # Counting Logic
+                if ROI_Y and y1 < ROI_Y < y2:
+                    if direction == "Up" and track_id not in tracked_y:
+                        tracked_y.add(track_id); cnt_forward += 1
+                        if current_light == 'red' and track_id not in violated_ids:
+                            violations += 1; violated_ids.add(track_id)
+                    elif direction == "Down" and track_id not in tracked_down:
+                        tracked_down.add(track_id); cnt_downward += 1
+
+                if ROI_X and x1 < ROI_X < x2 and direction == "Left" and track_id not in tracked_x:
+                    tracked_x.add(track_id); cnt_left += 1
+                    if current_light == 'red' and track_id not in violated_ids:
+                        violations += 1; violated_ids.add(track_id)
+
+                # วาดรถ
+                color = (0, 0, 255) if track_id in violated_ids else (0, 255, 0)
+                cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+                cv2.putText(frame, f"ID:{track_id} {direction}", (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+
+        # --- 🔴 วาดเส้น ROI และพื้นที่ต่างๆ กลับคืนมา 🔴 ---
+        if ROI_Y:
+            cv2.line(frame, (0, ROI_Y), (width, ROI_Y), (0, 255, 0), 2)
+            cv2.putText(frame, "FORWARD LINE (Y)", (10, ROI_Y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+        
+        if ROI_X:
+            cv2.line(frame, (ROI_X, 0), (ROI_X, height), (255, 255, 0), 2)
+            cv2.putText(frame, "LEFT TURN LINE (X)", (ROI_X+5, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
+
+        if VEH_ZONE:
+            cv2.rectangle(frame, (VEH_ZONE[0], VEH_ZONE[1]), (VEH_ZONE[2], VEH_ZONE[3]), (0, 255, 255), 1)
+            cv2.putText(frame, "VEHICLE ZONE", (VEH_ZONE[0], VEH_ZONE[1]-5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
+
         if TL_BOX:
-            current_light = get_stable_light(frame, TL_BOX)
+            cv2.rectangle(frame, (TL_BOX[0], TL_BOX[1]), (TL_BOX[2], TL_BOX[3]), (255, 255, 255), 1)
+            cv2.putText(frame, "TRAFFIC MONITOR", (TL_BOX[0], TL_BOX[1]-5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
 
-        # --- YOLO Detection ---
-        results = model(frame, conf=CONFIDENCE, verbose=False)[0]
+        # UI แสดงผลมุมจอ
+        lc = (0,0,255) if current_light=='red' else (0,255,0) if current_light=='green' else (0,255,255) if current_light=='yellow' else (128,128,128)
+        cv2.circle(frame, (width - 40, 40), 15, lc, -1)
+        cv2.putText(frame, f"FORWARD: {cnt_forward}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
+        cv2.putText(frame, f"LEFT TURN: {cnt_left}", (20, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,0), 2)
+        cv2.putText(frame, f"DOWNWARD (สวน): {cnt_downward}", (20, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200,200,255), 2)
+        cv2.putText(frame, f"VIOLATIONS: {violations}", (20, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,255), 2)
 
-        # --- ตรวจจับไฟจราจรอัตโนมัติจาก YOLO (class 9 = traffic light) ---
-        # Filter เพื่อกรองไฟเบรกท้ายรถออก:
-        #   1) ไฟจราจรจริงต้องอยู่ในครึ่งบนของภาพ (y < height * 0.65)
-        #   2) ขนาด box ต้องเล็ก (กว้าง < width*0.05, สูง < height*0.12)
-        #   3) box ต้องสูงกว่ากว้าง (traffic light เป็นแท่งตั้ง)
-        tl_boxes = []
-        for box in results.boxes:
-            if int(box.cls[0]) != 9:
-                continue
-            bx1, by1, bx2, by2 = map(int, box.xyxy[0])
-            bw = bx2 - bx1
-            bh = by2 - by1
-            # กรองเงื่อนไข
-            in_upper_half  = by2 < height * 0.65           # อยู่บนครึ่งบน
-            small_enough   = bw < width * 0.05             # ไม่กว้างเกิน 5% ของภาพ
-            tall_box       = bh > bw * 1.2                 # สูงกว่ากว้าง (แท่งตั้ง)
-            not_too_small  = bw > 10 and bh > 20           # ไม่เล็กเกินไป
-            if in_upper_half and small_enough and tall_box and not_too_small:
-                tl_boxes.append((bx1, by1, bx2, by2))
+        cv2.imshow('Thesis System: Full Visual ROI', frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'): break
 
-        if tl_boxes:
-            # เลือก box ที่ confidence สูงสุด (อยู่ใน list แรก = sorted โดย YOLO)
-            best_tl = tl_boxes[0]
-            current_light = get_stable_light(frame, best_tl)
-            bx1, by1, bx2, by2 = best_tl
-            lc = LIGHT_COLOR_MAP.get(current_light, (128,128,128))
-            cv2.rectangle(frame, (bx1, by1), (bx2, by2), lc, 3)
-            cv2.putText(frame, f'TrafficLight:{current_light}',
-                        (bx1, by1 - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.55, lc, 2)
-        elif TL_BOX:
-            # fallback: ใช้ manual box จาก set_roi.py
-            # แต่ต้องอยู่ในครึ่งบนของภาพเท่านั้น
-            _, tby1, _, tby2 = TL_BOX
-            if tby2 < height * 0.55:
-                current_light = get_stable_light(frame, TL_BOX)
-            else:
-                # box ต่ำเกินไป = น่าจะเป็นไฟท้ายรถ ไม่ใช้
-                current_light = 'unknown'
-
-        # --- Process Vehicle Detections ---
-        crossed_this_frame = False
-        vehicle_type = 'vehicle'
-
-        for box in results.boxes:
-            cls_id = int(box.cls[0])
-            if cls_id not in VEHICLE_CLASSES:
-                continue
-
-            # bounding box
-            x1, y1, x2, y2 = map(int, box.xyxy[0])
-            conf   = float(box.conf[0])
-            label  = VEHICLE_CLASSES[cls_id]
-            track_id = int(box.id[0]) if box.id is not None else -1
-
-            # วาดกล่อง
-            box_color = (0, 255, 255)
-            cv2.rectangle(frame, (x1, y1), (x2, y2), box_color, 2)
-            cv2.putText(frame, f'{label} {conf:.2f}',
-                        (x1, y1 - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.55, box_color, 2)
-
-            # ตรวจว่า bounding box ตัดผ่านเส้น ROI ไหม
-            center_y = (y1 + y2) // 2
-            if y1 < ROI_Y < y2 or abs(center_y - ROI_Y) < 20:
-                if track_id not in crossed_ids or track_id == -1:
-                    if track_id != -1:
-                        crossed_ids.add(track_id)
-                    crossed_this_frame = True
-                    vehicle_type = label
-
-        # --- นับ + ตรวจ Violation ---
-        is_violation = False
-        if crossed_this_frame:
-            total_vehicles += 1
-            ts = time.strftime('%H:%M:%S')
-            is_violation = (current_light == 'red')
-
-            if is_violation:
-                violations += 1
-                with open('violations.csv', 'a', newline='') as f:
-                    csv.writer(f).writerow([ts, total_vehicles, vehicle_type, 'RED'])
-                print(f"[VIOLATION] รถคันที่ {total_vehicles} ฝ่าไฟแดง! {ts}")
-
-            with open('traffic_measurement.csv', 'a', newline='') as f:
-                csv.writer(f).writerow([ts, total_vehicles, vehicle_type,
-                                        current_light, 'YES' if is_violation else 'NO'])
-
-        # --- วาด ROI Line ---
-        if crossed_this_frame and is_violation:
-            roi_color = (0, 0, 255)       # แดง = violation
-        elif crossed_this_frame:
-            roi_color = (0, 255, 0)       # เขียว = ผ่านปกติ
-        else:
-            roi_color = (255, 100, 0)     # น้ำเงิน = รอ
-        draw_roi_line(frame, ROI_Y, roi_color)
-
-        # --- HUD ---
-        draw_traffic_light_indicator(frame, current_light)
-
-        cv2.putText(frame, f'Vehicles: {total_vehicles}', (10, 35),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 255), 2)
-        cv2.putText(frame, f'Violations: {violations}', (10, 70),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
-
-        if is_violation:
-            cv2.putText(frame, '!! RED LIGHT VIOLATION !!',
-                        (width // 2 - 280, height // 2),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.8, (0, 0, 255), 4)
-
-        # (traffic light box วาดในส่วน YOLO detection แล้ว)
-
-        # --- Output ---
-        if command == 'imshow':
-            cv2.imshow('Vehicle Detection — YOLO26', frame)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
-        elif command == 'imwrite' and writer:
-            writer.write(frame)
-
-    # Cleanup
     cap.release()
-    if writer:
-        writer.release()
     cv2.destroyAllWindows()
 
-    print("=" * 50)
-    print(f"[DONE] รถทั้งหมด: {total_vehicles}  |  Violations: {violations}")
-    print("บันทึกผลไว้ใน traffic_measurement.csv และ violations.csv")
-
-
-# ============================================================
-# ENTRY POINT
-# ============================================================
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Vehicle Detection — YOLO26')
-    parser.add_argument('command', choices=['imshow', 'imwrite'],
-                        help='imshow = แสดงหน้าจอ, imwrite = บันทึกวิดีโอ')
-    args = parser.parse_args()
-    run(args.command)
+if __name__ == '__main__': run()
