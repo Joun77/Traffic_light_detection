@@ -2,6 +2,19 @@ version: '2.3'
 
 services:
 
+  db:
+    image: postgres:15
+    container_name: traffic_db
+    restart: always
+    environment:
+      - POSTGRES_USER=joun
+      - POSTGRES_PASSWORD=traffic_pass
+      - POSTGRES_DB=traffic_monitoring
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
   vehicle_counting:
     image: vehicle_counting
     container_name: vehicle_counting
@@ -10,9 +23,17 @@ services:
       context: .
     environment:
       - DISPLAY=unix$DISPLAY
+      - DB_HOST=db
+      - DB_NAME=traffic_monitoring
+      - DB_USER=joun
+      - DB_PASS=traffic_pass
     command: python3 -u vehicle_detection_main.py
     volumes:
       - ./:/vehicle_counting
       - /tmp/.X11-unix:/tmp/.X11-unix
     runtime: nvidia
+    depends_on:
+      - db
 
+volumes:
+  postgres_data:
