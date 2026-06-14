@@ -240,7 +240,24 @@ def run():
                         ms = int(time.time() * 1000) % 1000
                         img_p = f"evidences/images/v_{track_id}_{ts}_{ms}.jpg"
                         vid_p = f"evidences/videos/v_{track_id}_{ts}_{ms}.mp4"
-                        cv2.imwrite(img_p, frame)
+                        
+                        # 📸 CREATE VISUAL PROOF FOR IMAGE EVIDENCE
+                        proof_frame = frame.copy()
+                        # 1. วาดกรอบสีแดงหนาๆ รอบรถที่ทำผิด
+                        cv2.rectangle(proof_frame, (x1, y1), (x2, y2), (0, 0, 255), 5)
+                        cv2.putText(proof_frame, f"VIOLATION ID:{track_id} ({v_type.upper()})", (x1, y1-20), 
+                                    cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 255), 4)
+                        
+                        # 2. วาดกรอบรอบไฟจราจรในขณะนั้น
+                        if TL_BOX:
+                            tx1, ty1, tx2, ty2 = map(int, TL_BOX)
+                            cv2.rectangle(proof_frame, (tx1, ty1), (tx2, ty2), (255, 255, 255), 3)
+                            cv2.putText(proof_frame, f"LIGHT STATUS: RED", (tx1, ty1-15), 
+                                        cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
+
+                        # บันทึกภาพที่มีการขีดฆ่าเป็นหลักฐาน
+                        cv2.imwrite(img_p, proof_frame)
+                        
                         out_vid = cv2.VideoWriter(vid_p, cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))
                         for bf in buffer_frames: out_vid.write(bf)
                         active_recordings[track_id] = [out_vid, 0, vid_p, v_type, img_p]
