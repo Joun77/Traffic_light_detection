@@ -48,17 +48,18 @@ if os.path.exists(ROI_CONFIG):
 # ============================================================
 # HELPERS
 # ============================================================
-def log_violation_to_db(v_id, v_type, light, img_path, vid_path):
+def log_violation_to_api(v_id, v_type, light, img_path, vid_path):
     try:
-        conn = psycopg2.connect(**DB_CONFIG)
-        cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO violations (vehicle_id, vehicle_type, light_status, image_path, video_path)
-            VALUES (%s, %s, %s, %s, %s)
-        """, (int(v_id), v_type, light, img_path, vid_path))
-        conn.commit()
-        cur.close(); conn.close()
-    except Exception as e: print(f"❌ DB Error: {e}")
+        # ส่งข้อมูลไปที่ API แทนการเขียน DB โดยตรง เพื่อให้ API แจ้งเตือนหน้าเว็บได้ทันที
+        payload = {
+            "vehicle_id": int(v_id),
+            "vehicle_type": v_type,
+            "light_status": light,
+            "image_path": img_path,
+            "video_path": vid_path
+        }
+        requests.post("http://localhost:8000/violations", json=payload, timeout=0.5)
+    except Exception as e: print(f"❌ API Logging Error: {e}")
 
 def is_inside(box, area):
     if area is None: return True
@@ -153,8 +154,9 @@ def run():
                 if is_violating and track_id not in violated_ids:
                     violations += 1; violated_ids.add(track_id)
                     ts = time.strftime('%Y%m%d_%H%M%S')
-                    img_p = f"evidences/images/v_{track_id}_{ts}.jpg"
-                    vid_p = f"evidences/videos/v_{track_id}_{ts}.mp4"
+                    ms = int(time.time() * 1000) % 1000
+                    img_p = f"evidences/images/v_{track_id}_{ts}_{ms}.jpg"
+                    vid_p = f"evidences/videos/v_{track_id}_{ts}_{ms}.mp4"
                     cv2.imwrite(img_p, frame)
                     
                     out_vid = cv2.VideoWriter(vid_p, cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))

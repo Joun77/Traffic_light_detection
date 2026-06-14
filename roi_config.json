@@ -1,17 +1,7 @@
 {
-  "roi_y": 2814,
-  "roi_x": 747,
-  "traffic_light_box": [
-    831,
-    2261,
-    1469,
-    2425
-  ],
-  "vehicle_zone": [
-    754,
-    2817,
-    2075,
-    3827
-  ],
+  "roi_y": null,
+  "roi_x": null,
+  "traffic_light_box": null,
+  "vehicle_zone": null,
   "scale": 1.0
 }
