@@ -41,7 +41,6 @@ CONFIG_FILE = "roi_config.json"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(EVIDENCE_DIR, exist_ok=True)
 
-# Mount static files to serve evidence images
 app.mount("/evidences", StaticFiles(directory=EVIDENCE_DIR), name="evidences")
 
 # --- 🚀 Real-time Event System (SSE) ---
@@ -63,26 +62,11 @@ class Notifier:
 
 notifier = Notifier()
 
-@app.get("/events")
-async def event_stream(request: Request):
-    queue = await notifier.subscribe()
-    async def stream():
-        try:
-            while True:
-                if await request.is_disconnected():
-                    break
-                data = await queue.get()
-                yield f"data: {json.dumps(data)}\n\n"
-        except asyncio.CancelledError:
-            pass
-        finally:
-            notifier.unsubscribe(queue)
-
-    return StreamingResponse(stream(), media_type="text/event-stream")
-
-# Global variables for state management
+# --- 🧠 Global State ---
 latest_frame = None
-ai_process = None # เก็บ process ของ AI
+latest_light_status = "unknown"
+latest_video = "IMG_9582.MOV"
+ai_process = None
 
 class ROIConfig(BaseModel):
     roi_y: Optional[int] = None
@@ -98,9 +82,20 @@ class ViolationReport(BaseModel):
     image_path: str
     video_path: str
 
-@app.get("/")
-def read_root():
-    return {"status": "Online", "process_running": ai_process is not None}
+# --- 🚦 New Light Status Endpoint ---
+
+@app.post("/set-current-light")
+async def set_current_light(data: dict):
+    global latest_light_status
+    status = data.get("status", "unknown")
+    latest_light_status = status
+    print(f"🚦 [BACKEND] Received Light Status: {status}")
+    await notifier.notify({"type": "light_status", "data": status})
+    return {"status": "success", "color": status}
+
+@app.get("/light-status")
+async def get_light_status():
+    return {"status": latest_light_status}
 
 # --- 📊 Database & Violation Endpoints ---
 
@@ -118,7 +113,6 @@ async def add_violation(report: ViolationReport):
         cur.close()
         conn.close()
 
-        # แจ้งเตือนหน้าเว็บทันทีผ่าน SSE
         await notifier.notify({"type": "new_violation", "data": new_violation})
         return {"status": "success", "data": new_violation}
     except Exception as e:
@@ -155,62 +149,67 @@ async def get_violation_summary(period: str = "all"):
     try:
         conn = psycopg2.connect(**DB_CONFIG)
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        
-        # กรองตามช่วงเวลา
         where_clause = ""
-        if period == "day":
-            where_clause = "WHERE time_stamp >= CURRENT_DATE"
-        elif period == "week":
-            where_clause = "WHERE time_stamp >= CURRENT_DATE - INTERVAL '7 days'"
-        elif period == "month":
-            where_clause = "WHERE time_stamp >= CURRENT_DATE - INTERVAL '30 days'"
+        if period == "day": where_clause = "WHERE time_stamp >= CURRENT_DATE"
+        elif period == "week": where_clause = "WHERE time_stamp >= CURRENT_DATE - INTERVAL '7 days'"
+        elif period == "month": where_clause = "WHERE time_stamp >= CURRENT_DATE - INTERVAL '30 days'"
 
-        # 1. จำนวนรวม
         cur.execute(f"SELECT COUNT(*) as total FROM violations {where_clause}")
         total = cur.fetchone()['total']
 
-        # 2. แยกตามประเภทรถ
         cur.execute(f"SELECT vehicle_type, COUNT(*) as count FROM violations {where_clause} GROUP BY vehicle_type")
         by_type = cur.fetchall()
 
-        # 3. ข้อมูลรายวัน (สำหรับทำกราฟ)
         cur.execute(f"""
             SELECT TO_CHAR(time_stamp, 'YYYY-MM-DD') as date, COUNT(*) as count 
-            FROM violations 
-            {where_clause}
-            GROUP BY date 
-            ORDER BY date ASC
+            FROM violations {where_clause} GROUP BY date ORDER BY date ASC
         """)
         daily_stats = cur.fetchall()
 
-        cur.close()
-        conn.close()
-        
-        return {
-            "total_violations": total,
-            "by_type": by_type,
-            "daily_stats": daily_stats
-        }
+        cur.close(); conn.close()
+        return {"total_violations": total, "by_type": by_type, "daily_stats": daily_stats}
     except Exception as e:
         return {"error": str(e)}
 
+# --- 🎥 System Routes ---
+
+@app.get("/")
+def read_root():
+    return {"status": "Online", "ai_running": ai_process is not None, "light": latest_light_status}
+
+@app.get("/events")
+async def event_stream(request: Request):
+    queue = await notifier.subscribe()
+    async def stream():
+        try:
+            while True:
+                if await request.is_disconnected(): break
+                data = await queue.get()
+                yield f"data: {json.dumps(data)}\n\n"
+        except asyncio.CancelledError: pass
+        finally: notifier.unsubscribe(queue)
+    return StreamingResponse(stream(), media_type="text/event-stream")
+
 @app.post("/upload-video")
 async def upload_video(file: UploadFile = File(...)):
+    global latest_video
     file_path = os.path.join(UPLOAD_DIR, file.filename)
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
+    latest_video = file_path
     return {"message": "Upload successful", "filename": file.filename}
 
 @app.post("/set-roi")
 async def set_roi(config: ROIConfig):
-    try:
-        with open(CONFIG_FILE, "w") as f:
-            json.dump(config.dict(), f, indent=2)
-        return {"status": "success"}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(config.dict(), f, indent=2)
+    return {"status": "success"}
 
-# --- 🎥 Video Streaming ---
+@app.get("/get-roi")
+async def get_roi():
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE, "r") as f: return json.load(f)
+    return {"roi_y": None, "roi_x": None, "traffic_light_box": None, "vehicle_zone": None, "scale": 1.0}
 
 @app.post("/update-frame")
 async def update_frame(request: Request):
@@ -219,11 +218,9 @@ async def update_frame(request: Request):
         contents = await request.body()
         nparr = np.frombuffer(contents, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        if img is not None:
-            latest_frame = img
+        if img is not None: latest_frame = img
         return {"status": "ok"}
-    except:
-        return {"status": "error"}
+    except: return {"status": "error"}
 
 async def frame_generator():
     global latest_frame
@@ -234,49 +231,39 @@ async def frame_generator():
                 yield (b'--frame\r\n'
                        b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
         else:
-            # ส่งภาพดำหลอกๆ ไปก่อนถ้ายังไม่มีเฟรม
             black_frame = np.zeros((480, 640, 3), dtype=np.uint8)
             cv2.putText(black_frame, "Waiting for AI Feed...", (150, 240), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2)
             _, buffer = cv2.imencode('.jpg', black_frame)
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.04)
 
 @app.get("/video-feed")
 async def video_feed():
     return StreamingResponse(frame_generator(), media_type="multipart/x-mixed-replace; boundary=frame")
 
-# --- 🤖 AI Process Control ---
-
 @app.post("/start-detection")
-async def start_detection():
-    global ai_process, latest_frame
-    if ai_process is not None:
-        return {"status": "error", "message": "AI is already running"}
-    
-    latest_frame = None # ล้างภาพเก่า
-    # รัน AI และเก็บ Process ไว้
-    ai_process = subprocess.Popen(["python3", "vehicle_detection_main.py"])
-    print(f"🚀 AI Process started with PID: {ai_process.pid}")
-    return {"status": "success", "message": "AI Started"}
+async def start_detection(config: Optional[ROIConfig] = None):
+    global ai_process, latest_frame, latest_video
+    if ai_process is not None: return {"status": "error", "message": "AI already running"}
+    latest_frame = None
+    cmd = ["python3", "vehicle_detection_main.py", "--video", latest_video]
+    if config:
+        if config.roi_y is not None: cmd.extend(["--roi_y", str(config.roi_y)])
+        if config.roi_x is not None: cmd.extend(["--roi_x", str(config.roi_x)])
+        if config.traffic_light_box: cmd.extend(["--tl_box", ",".join(map(str, config.traffic_light_box))])
+        if config.vehicle_zone: cmd.extend(["--veh_zone", ",".join(map(str, config.vehicle_zone))])
+    ai_process = subprocess.Popen(cmd)
+    return {"status": "success"}
 
 @app.post("/stop-detection")
 async def stop_detection():
     global ai_process, latest_frame
-    if ai_process is None:
-        return {"status": "error", "message": "No AI process running"}
-    
-    # สั่งหยุด Process
-    ai_process.terminate()
-    try:
-        ai_process.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        ai_process.kill()
-    
-    ai_process = None
+    if ai_process:
+        ai_process.terminate()
+        ai_process = None
     latest_frame = None
-    print("🛑 AI Process stopped")
-    return {"status": "success", "message": "AI Stopped"}
+    return {"status": "stopped"}
 
 if __name__ == "__main__":
     import uvicorn

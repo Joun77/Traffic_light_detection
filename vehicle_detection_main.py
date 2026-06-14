@@ -15,12 +15,23 @@ from collections import deque
 from ultralytics import YOLO
 
 # ============================================================
+# ARGUMENTS
+# ============================================================
+parser = argparse.ArgumentParser()
+parser.add_argument('--video', type=str, default='IMG_9582.MOV', help='Path to video source')
+parser.add_argument('--roi_y', type=int, default=None)
+parser.add_argument('--roi_x', type=int, default=None)
+parser.add_argument('--tl_box', type=str, default=None, help='Format: x1,y1,x2,y2')
+parser.add_argument('--veh_zone', type=str, default=None, help='Format: x1,y1,x2,y2')
+args = parser.parse_args()
+
+# ============================================================
 # CONFIG
 # ============================================================
-VIDEO_SOURCE      = 'IMG_9582.MOV'
+VIDEO_SOURCE      = args.video
 VEHICLE_MODEL     = 'yolo26s.pt'
 TRAFFIC_MODEL     = 'traffic_light_results/weights/best.pt'
-CONFIDENCE        = 0.35
+CONFIDENCE        = 0.30 # Slightly lower for better recall on small bikes
 ROI_CONFIG        = 'roi_config.json'
 STREAM_URL        = 'http://localhost:8000/update-frame'
 
@@ -35,22 +46,37 @@ DB_CONFIG = {
 
 VEHICLE_CLASSES = {2: 'car', 3: 'motorcycle', 5: 'bus', 7: 'truck'}
 
-# LOAD ROI CONFIG
+# LOAD ROI CONFIG (Active Logic)
 ROI_Y = None; ROI_X = None; TL_BOX = None; VEH_ZONE = None
+
+# 1. Load from file first (Default)
 if os.path.exists(ROI_CONFIG):
-    with open(ROI_CONFIG) as f:
-        cfg = json.load(f)
-    ROI_Y  = cfg.get('roi_y')
-    ROI_X  = cfg.get('roi_x')
-    TL_BOX = cfg.get('traffic_light_box')
-    VEH_ZONE = cfg.get('vehicle_zone')
+    try:
+        with open(ROI_CONFIG) as f:
+            cfg = json.load(f)
+        ROI_Y  = cfg.get('roi_y')
+        ROI_X  = cfg.get('roi_x')
+        TL_BOX = cfg.get('traffic_light_box')
+        VEH_ZONE = cfg.get('vehicle_zone')
+    except: pass
+
+# 2. Override with CLI Arguments (Session-specific)
+if args.roi_y is not None: ROI_Y = args.roi_y
+if args.roi_x is not None: ROI_X = args.roi_x
+if args.tl_box: 
+    try: TL_BOX = [int(v) for v in args.tl_box.split(',')]
+    except: pass
+if args.veh_zone: 
+    try: VEH_ZONE = [int(v) for v in args.veh_zone.split(',')]
+    except: pass
+
+print(f"🚀 AI SESSION START: Y={ROI_Y}, X={ROI_X}, TL={TL_BOX}, ZONE={VEH_ZONE}")
 
 # ============================================================
 # HELPERS
 # ============================================================
 def log_violation_to_api(v_id, v_type, light, img_path, vid_path):
     try:
-        # ส่งข้อมูลไปที่ API แทนการเขียน DB โดยตรง เพื่อให้ API แจ้งเตือนหน้าเว็บได้ทันที
         payload = {
             "vehicle_id": int(v_id),
             "vehicle_type": v_type,
@@ -59,7 +85,12 @@ def log_violation_to_api(v_id, v_type, light, img_path, vid_path):
             "video_path": vid_path
         }
         requests.post("http://localhost:8000/violations", json=payload, timeout=0.5)
-    except Exception as e: print(f"❌ API Logging Error: {e}")
+    except Exception as e: print(f"❌ API Violation Log Error: {e}")
+
+def send_light_status_to_api(status):
+    try:
+        resp = requests.post("http://localhost:8000/set-current-light", json={"status": status}, timeout=0.05)
+    except: pass
 
 def is_inside(box, area):
     if area is None: return True
@@ -69,10 +100,8 @@ def is_inside(box, area):
     return (ax1 <= cx <= ax2) and (ay1 <= cy <= ay2)
 
 def send_frame_to_api(frame):
-    """ส่งเฟรมไปที่ FastAPI (โดยไม่เปิดหน้าต่างใหม่)"""
     try:
         _, img_encoded = cv2.imencode('.jpg', frame)
-        # ใช้ timeout สั้นๆ เพื่อไม่ให้หน่วง AI
         requests.post(STREAM_URL, data=img_encoded.tobytes(), headers={'Content-Type': 'image/jpeg'}, timeout=0.03)
     except: pass
 
@@ -80,7 +109,7 @@ def send_frame_to_api(frame):
 # MAIN DETECTION
 # ============================================================
 def run():
-    print("[YOLO] Starting Web-Stream Mode (No Local Windows)...")
+    print(f"[YOLO] Starting Web-Stream Mode using video: {VIDEO_SOURCE}")
     v_model = YOLO(VEHICLE_MODEL)
     t_model = YOLO(TRAFFIC_MODEL)
     
@@ -95,95 +124,149 @@ def run():
     
     cnt_forward = 0; cnt_downward = 0; cnt_left = 0; violations = 0
     current_light = 'unknown'
+    last_sent_light = None
+    light_history = deque(maxlen=15)
+    frames_since_last_light = 0
+    MAX_LIGHT_LOST_FRAMES = int(fps * 2.0)
 
     buffer_frames = deque(maxlen=int(fps * 2)) 
     active_recordings = {}
-
+    frame = None 
+    
     while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret: break
-        
+        if current_light == 'unknown' or frames_since_last_light > MAX_LIGHT_LOST_FRAMES:
+            if frame is None:
+                ret, frame = cap.read()
+                if not ret: break
+        else:
+            ret, next_frame = cap.read()
+            if not ret: break
+            frame = next_frame
+
         display_frame = frame.copy()
         buffer_frames.append(frame.copy())
 
-        # 1. Traffic Light
-        t_results = t_model(frame, conf=0.4, verbose=False)[0]
-        if len(t_results.boxes) > 0:
-            for box in t_results.boxes:
-                b = list(map(int, box.xyxy[0]))
-                if is_inside(b, TL_BOX):
-                    current_light = t_model.names[int(box.cls[0])]
-                    cv2.rectangle(display_frame, (b[0], b[1]), (b[2], b[3]), (255, 255, 255), 2)
-                    break
+        # 1. Traffic Light Detection (ZOOM-IN)
+        detected_this_frame = 'unknown'
+        if TL_BOX is not None:
+            tx1, ty1, tx2, ty2 = map(int, TL_BOX)
+            pad = 50
+            cx1, cy1 = max(0, tx1-pad), max(0, ty1-pad)
+            cx2, cy2 = min(width, tx2+pad), min(height, ty2+pad)
+            tl_crop = frame[cy1:cy2, cx1:cx2]
+            if tl_crop.size > 0:
+                t_results = t_model(tl_crop, conf=0.25, verbose=False)[0]
+                if len(t_results.boxes) > 0:
+                    best_box = t_results.boxes[0]
+                    detected_this_frame = t_model.names[int(best_box.cls[0])]
+                    b = best_box.xyxy[0].cpu().numpy()
+                    cv2.rectangle(display_frame, (int(b[0]+cx1), int(b[1]+cy1)), (int(b[2]+cx1), int(b[3]+cy1)), (255, 255, 255), 3)
+        
+        if detected_this_frame != 'unknown':
+            light_history.append(detected_this_frame)
+            frames_since_last_light = 0
+        else:
+            frames_since_last_light += 1
 
-        # 2. Vehicle Detection & Tracking
-        v_results = v_model.track(frame, persist=True, conf=CONFIDENCE, verbose=False)[0]
-        if v_results.boxes.id is not None:
-            boxes = v_results.boxes.xyxy.cpu().numpy()
-            ids = v_results.boxes.id.cpu().numpy().astype(int)
-            clss = v_results.boxes.cls.cpu().numpy().astype(int)
+        valid_hits = [s for s in light_history if s != 'unknown']
+        if valid_hits:
+            current_light = max(set(valid_hits), key=valid_hits.count)
+        else:
+            current_light = 'unknown'
+            
+        if current_light != last_sent_light:
+            send_light_status_to_api(current_light)
+            last_sent_light = current_light
 
-            for box, track_id, cls in zip(boxes, ids, clss):
-                if cls not in VEHICLE_CLASSES: continue
-                if not is_inside(list(map(int, box)), VEH_ZONE): continue
-                
-                x1, y1, x2, y2 = map(int, box)
-                v_type = VEHICLE_CLASSES[cls]
-                cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
-                
-                direction = "Static"
-                if track_id in pos_history:
-                    prev_cx, prev_cy = pos_history[track_id]
-                    dy, dx = cy - prev_cy, cx - prev_cx
-                    if abs(dy) > abs(dx): direction = "Down" if dy > 0 else "Up"
-                    else: direction = "Right" if dx > 0 else "Left"
-                pos_history[track_id] = (cx, cy)
+        if current_light == 'unknown':
+            cv2.putText(display_frame, "SEARCHING FOR TRAFFIC LIGHT...", (width//2 - 350, height//2), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 165, 255), 4)
+            send_frame_to_api(display_frame)
+            continue
 
-                is_violating = False
-                if ROI_Y and y1 < ROI_Y < y2 and direction == "Up":
-                    if track_id not in tracked_y:
-                        tracked_y.add(track_id); cnt_forward += 1
-                        if current_light == 'red': is_violating = True
-                elif ROI_Y and y1 < ROI_Y < y2 and direction == "Down":
-                    if track_id not in tracked_down: tracked_down.add(track_id); cnt_downward += 1
-                if ROI_X and x1 < ROI_X < x2 and direction == "Left":
-                    if track_id not in tracked_x:
-                        tracked_x.add(track_id); cnt_left += 1
-                        if current_light == 'red': is_violating = True
+        # 2. Vehicle Detection (ZONE-BASED ZOOM)
+        # We crop the frame to VEH_ZONE and run detection on the crop to find small objects
+        vx1, vy1, vx2, vy2 = map(int, VEH_ZONE) if VEH_ZONE else (0, 0, width, height)
+        veh_crop = frame[vy1:vy2, vx1:vx2]
+        
+        if veh_crop.size > 0:
+            v_results = v_model.track(veh_crop, persist=True, conf=CONFIDENCE, verbose=False)[0]
+            if v_results.boxes.id is not None:
+                boxes = v_results.boxes.xyxy.cpu().numpy()
+                ids = v_results.boxes.id.cpu().numpy().astype(int)
+                clss = v_results.boxes.cls.cpu().numpy().astype(int)
 
-                if is_violating and track_id not in violated_ids:
-                    violations += 1; violated_ids.add(track_id)
-                    ts = time.strftime('%Y%m%d_%H%M%S')
-                    ms = int(time.time() * 1000) % 1000
-                    img_p = f"evidences/images/v_{track_id}_{ts}_{ms}.jpg"
-                    vid_p = f"evidences/videos/v_{track_id}_{ts}_{ms}.mp4"
-                    cv2.imwrite(img_p, frame)
+                for box, track_id, cls in zip(boxes, ids, clss):
+                    if cls not in VEHICLE_CLASSES: continue
                     
-                    out_vid = cv2.VideoWriter(vid_p, cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))
-                    for bf in buffer_frames: out_vid.write(bf)
-                    active_recordings[track_id] = [out_vid, 0, vid_p, v_type, img_p]
+                    # Map coordinates back to original frame
+                    x1, y1, x2, y2 = map(int, box)
+                    x1 += vx1; x2 += vx1; y1 += vy1; y2 += vy1
+                    
+                    v_type = VEHICLE_CLASSES[cls]
+                    cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+                    
+                    direction = "Static"
+                    if track_id in pos_history:
+                        prev_cx, prev_cy = pos_history[track_id]
+                        dy, dx = cy - prev_cy, cx - prev_cx
+                        if abs(dy) > abs(dx): direction = "Down" if dy > 0 else "Up"
+                        else: direction = "Right" if dx > 0 else "Left"
+                    pos_history[track_id] = (cx, cy)
 
-                color = (0, 0, 255) if track_id in violated_ids else (0, 255, 0)
-                cv2.rectangle(display_frame, (x1, y1), (x2, y2), color, 2)
-                cv2.putText(display_frame, f"ID:{track_id}", (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+                    is_violating = False
+                    if ROI_Y and y1 < ROI_Y < y2 and direction == "Up":
+                        if track_id not in tracked_y:
+                            tracked_y.add(track_id); cnt_forward += 1
+                            if current_light == 'red': is_violating = True
+                    elif ROI_Y and y1 < ROI_Y < y2 and direction == "Down":
+                        if track_id not in tracked_down: tracked_down.add(track_id); cnt_downward += 1
+                    if ROI_X and x1 < ROI_X < x2 and direction == "Left":
+                        if track_id not in tracked_x:
+                            tracked_x.add(track_id); cnt_left += 1
+                            if current_light == 'red': is_violating = True
+
+                    if is_violating and track_id not in violated_ids:
+                        violations += 1; violated_ids.add(track_id)
+                        ts = time.strftime('%Y%m%d_%H%M%S')
+                        ms = int(time.time() * 1000) % 1000
+                        img_p = f"evidences/images/v_{track_id}_{ts}_{ms}.jpg"
+                        vid_p = f"evidences/videos/v_{track_id}_{ts}_{ms}.mp4"
+                        cv2.imwrite(img_p, frame)
+                        out_vid = cv2.VideoWriter(vid_p, cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))
+                        for bf in buffer_frames: out_vid.write(bf)
+                        active_recordings[track_id] = [out_vid, 0, vid_p, v_type, img_p]
+
+                    color = (0, 0, 255) if track_id in violated_ids else (0, 255, 0)
+                    cv2.rectangle(display_frame, (x1, y1), (x2, y2), color, 2)
+                    cv2.putText(display_frame, f"{v_type} ID:{track_id}", (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
         # Handle Recordings
         for vid_id in list(active_recordings.keys()):
             w, f_c, vp, vt, ip = active_recordings[vid_id]
             w.write(frame); active_recordings[vid_id][1] += 1
             if active_recordings[vid_id][1] > int(fps * 3):
-                w.release(); log_violation_to_db(vid_id, vt, "RED", ip, vp); del active_recordings[vid_id]
+                w.release(); log_violation_to_api(vid_id, vt, "RED", ip, vp); del active_recordings[vid_id]
 
-        # Draw GUI elements
-        if ROI_Y: cv2.line(display_frame, (0, ROI_Y), (width, ROI_Y), (0, 255, 0), 2)
-        if ROI_X: cv2.line(display_frame, (ROI_X, 0), (ROI_X, height), (255, 255, 0), 2)
-        if VEH_ZONE: cv2.rectangle(display_frame, (VEH_ZONE[0], VEH_ZONE[1]), (VEH_ZONE[2], VEH_ZONE[3]), (0, 255, 255), 1)
+        # --- 🎨 Draw GUI (Always drawn in every frame) ---
+        if ROI_Y is not None: 
+            cv2.line(display_frame, (0, int(ROI_Y)), (width, int(ROI_Y)), (0, 255, 0), 3)
+            cv2.putText(display_frame, "ROI Y", (10, int(ROI_Y)-10), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+        if ROI_X is not None: 
+            cv2.line(display_frame, (int(ROI_X), 0), (int(ROI_X), height), (255, 255, 0), 3)
+            cv2.putText(display_frame, "ROI X", (int(ROI_X)+10, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 0), 2)
+        if TL_BOX is not None:
+            cv2.rectangle(display_frame, (int(TL_BOX[0]), int(TL_BOX[1])), (int(TL_BOX[2]), int(TL_BOX[3])), (0, 0, 255), 3)
+            cv2.putText(display_frame, "LIGHT ZONE", (int(TL_BOX[0]), int(TL_BOX[1])-10), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+        if VEH_ZONE is not None: 
+            cv2.rectangle(display_frame, (int(VEH_ZONE[0]), int(VEH_ZONE[1])), (int(VEH_ZONE[2]), int(VEH_ZONE[3])), (255, 255, 255), 1)
+            cv2.putText(display_frame, "VEHICLE ZONE", (int(VEH_ZONE[0])+5, int(VEH_ZONE[1])+25), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 1)
         
+        # Indicator light circle
         lc = (0,0,255) if current_light=='red' else (0,255,0) if current_light=='green' else (128,128,128)
-        cv2.circle(display_frame, (width - 40, 40), 15, lc, -1)
-        cv2.putText(display_frame, f"VIO:{violations}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,0,255), 2)
+        cv2.circle(display_frame, (width - 80, 80), 30, lc, -1)
+        cv2.putText(display_frame, f"VIO:{violations}", (40, 80), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0,0,255), 3)
 
-        # 🚀 ส่งไปที่ Web เท่านั้น (ห้ามใช้ cv2.imshow)
         send_frame_to_api(display_frame)
 
     cap.release()
