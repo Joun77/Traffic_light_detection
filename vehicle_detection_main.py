@@ -206,25 +206,33 @@ def run():
                     v_type = VEHICLE_CLASSES[cls]
                     cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
                     
-                    direction = "Static"
+                    # 🚦 ROBUST CROSSING DETECTION 🚦
+                    is_violating = False
                     if track_id in pos_history:
                         prev_cx, prev_cy = pos_history[track_id]
-                        dy, dx = cy - prev_cy, cx - prev_cx
-                        if abs(dy) > abs(dx): direction = "Down" if dy > 0 else "Up"
-                        else: direction = "Right" if dx > 0 else "Left"
-                    pos_history[track_id] = (cx, cy)
+                        
+                        # 1. แนวนอน (ROI_Y) - ตรวจการข้ามเส้นจากล่างขึ้นบน (Up)
+                        if ROI_Y is not None:
+                            # ตรวจว่าเฟรมก่อนอยู่ใต้เส้น และเฟรมนี้อยู่เหนือเส้น (หรือทับเส้นพอดี)
+                            # เพิ่มบัฟเฟอร์ 15 พิกเซลเพื่อป้องกันการข้ามเฟรมสำหรับรถเร็ว
+                            if prev_cy > ROI_Y and cy <= (ROI_Y + 15):
+                                if track_id not in tracked_y:
+                                    tracked_y.add(track_id); cnt_forward += 1
+                                    if current_light == 'red': is_violating = True
 
-                    is_violating = False
-                    if ROI_Y and y1 < ROI_Y < y2 and direction == "Up":
-                        if track_id not in tracked_y:
-                            tracked_y.add(track_id); cnt_forward += 1
-                            if current_light == 'red': is_violating = True
-                    elif ROI_Y and y1 < ROI_Y < y2 and direction == "Down":
-                        if track_id not in tracked_down: tracked_down.add(track_id); cnt_downward += 1
-                    if ROI_X and x1 < ROI_X < x2 and direction == "Left":
-                        if track_id not in tracked_x:
-                            tracked_x.add(track_id); cnt_left += 1
-                            if current_light == 'red': is_violating = True
+                            # ตรวจการวิ่งย้อนกลับ (Down)
+                            elif prev_cy < ROI_Y and cy >= (ROI_Y - 15):
+                                if track_id not in tracked_down:
+                                    tracked_down.add(track_id); cnt_downward += 1
+
+                        # 2. แนวตั้ง (ROI_X) - ตรวจการข้ามจากขวาไปซ้าย (Left)
+                        if ROI_X is not None:
+                            if prev_cx > ROI_X and cx <= (ROI_X + 15):
+                                if track_id not in tracked_x:
+                                    tracked_x.add(track_id); cnt_left += 1
+                                    if current_light == 'red': is_violating = True
+
+                    pos_history[track_id] = (cx, cy)
 
                     if is_violating and track_id not in violated_ids:
                         violations += 1; violated_ids.add(track_id)

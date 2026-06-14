@@ -185,7 +185,9 @@ async def event_stream(request: Request):
             while True:
                 if await request.is_disconnected(): break
                 data = await queue.get()
-                yield f"data: {json.dumps(data)}\n\n"
+                # 🛠️ Fix: Ensure datetime objects are converted to strings before JSON dumping
+                json_data = json.dumps(data, default=str)
+                yield f"data: {json_data}\n\n"
         except asyncio.CancelledError: pass
         finally: notifier.unsubscribe(queue)
     return StreamingResponse(stream(), media_type="text/event-stream")
