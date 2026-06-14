@@ -6,6 +6,7 @@ import cv2
 import asyncio
 import numpy as np
 import signal
+from datetime import datetime, date
 from fastapi import FastAPI, UploadFile, File, BackgroundTasks, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -82,7 +83,7 @@ class ViolationReport(BaseModel):
     image_path: str
     video_path: str
 
-# --- 🚦 New Light Status Endpoint ---
+# --- 🚦 Light Status Endpoint ---
 
 @app.post("/set-current-light")
 async def set_current_light(data: dict):
@@ -113,9 +114,11 @@ async def add_violation(report: ViolationReport):
         cur.close()
         conn.close()
 
-        await notifier.notify({"type": "new_violation", "data": new_violation})
-        return {"status": "success", "data": new_violation}
+        violation_data = dict(new_violation)
+        await notifier.notify({"type": "new_violation", "data": violation_data})
+        return {"status": "success", "data": violation_data}
     except Exception as e:
+        print(f"❌ DB Error: {e}")
         return {"status": "error", "message": str(e)}
 
 @app.get("/violations")
@@ -127,7 +130,7 @@ async def get_violations(limit: int = 10):
         rows = cur.fetchall()
         cur.close()
         conn.close()
-        return rows
+        return [dict(row) for row in rows]
     except Exception as e:
         return {"error": str(e)}
 
@@ -158,17 +161,18 @@ async def get_violation_summary(period: str = "all"):
         total = cur.fetchone()['total']
 
         cur.execute(f"SELECT vehicle_type, COUNT(*) as count FROM violations {where_clause} GROUP BY vehicle_type")
-        by_type = cur.fetchall()
+        by_type = [dict(r) for r in cur.fetchall()]
 
         cur.execute(f"""
             SELECT TO_CHAR(time_stamp, 'YYYY-MM-DD') as date, COUNT(*) as count 
             FROM violations {where_clause} GROUP BY date ORDER BY date ASC
         """)
-        daily_stats = cur.fetchall()
+        daily_stats = [dict(r) for r in cur.fetchall()]
 
         cur.close(); conn.close()
         return {"total_violations": total, "by_type": by_type, "daily_stats": daily_stats}
     except Exception as e:
+        print(f"❌ Summary Error: {e}")
         return {"error": str(e)}
 
 # --- 🎥 System Routes ---
@@ -185,9 +189,12 @@ async def event_stream(request: Request):
             while True:
                 if await request.is_disconnected(): break
                 data = await queue.get()
-                # 🛠️ Fix: Ensure datetime objects are converted to strings before JSON dumping
-                json_data = json.dumps(data, default=str)
-                yield f"data: {json_data}\n\n"
+                # 🛠️ Robust JSON Serialization for SSE
+                try:
+                    json_data = json.dumps(data, default=str)
+                    yield f"data: {json_data}\n\n"
+                except Exception as e:
+                    print(f"❌ SSE Error: {e}")
         except asyncio.CancelledError: pass
         finally: notifier.unsubscribe(queue)
     return StreamingResponse(stream(), media_type="text/event-stream")
