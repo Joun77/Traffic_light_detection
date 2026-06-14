@@ -108,4 +108,8 @@ IMG_9582.MOV
 
 # Temporary drive upload folder
 .tmp.driveupload/
-\nevidences/\nuploads/
+
+# Traffic System Ignore
+evidences/
+uploads/
+detected_vehicles/
