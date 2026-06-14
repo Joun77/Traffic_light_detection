@@ -18,7 +18,7 @@ services:
   vehicle_counting:
     image: vehicle_counting
     container_name: vehicle_counting
-    working_dir: /vehicle_counting
+    working_dir: /vehicle_counting/backend
     build:
       context: .
     environment:

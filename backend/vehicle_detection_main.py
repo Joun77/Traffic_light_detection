@@ -28,12 +28,14 @@ args = parser.parse_args()
 # ============================================================
 # CONFIG
 # ============================================================
+BASE_DIR          = os.path.dirname(os.path.abspath(__file__))
 VIDEO_SOURCE      = args.video
-VEHICLE_MODEL     = 'yolo26s.pt'
-TRAFFIC_MODEL     = 'traffic_light_results/weights/best.pt'
+VEHICLE_MODEL     = os.path.join(BASE_DIR, '../models/yolo26s.pt')
+TRAFFIC_MODEL     = os.path.join(BASE_DIR, '../models/traffic_light_results/weights/best.pt')
 CONFIDENCE        = 0.30 # Slightly lower for better recall on small bikes
-ROI_CONFIG        = 'roi_config.json'
+ROI_CONFIG        = os.path.join(BASE_DIR, '../data/roi_config.json')
 STREAM_URL        = 'http://localhost:8000/update-frame'
+OUTPUT_BASE       = os.path.join(BASE_DIR, '../outputs')
 
 # Database Config
 DB_CONFIG = {

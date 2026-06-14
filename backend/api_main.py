@@ -36,9 +36,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-UPLOAD_DIR = "uploads"
-EVIDENCE_DIR = "evidences"
-CONFIG_FILE = "roi_config.json"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+UPLOAD_DIR = os.path.join(BASE_DIR, "../data/uploads")
+EVIDENCE_DIR = os.path.join(BASE_DIR, "../outputs/evidences")
+CONFIG_FILE = os.path.join(BASE_DIR, "../data/roi_config.json")
+
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(EVIDENCE_DIR, exist_ok=True)
 
