@@ -106,7 +106,7 @@ export default function MonitorPage() {
   if (!mounted) return null
 
   return (
-    <DashboardShell title="ຕິດຕາມສົດ (Live Monitor)">
+    <DashboardShell title="ລະບົບການກວດຈັບ">
       <div className="flex flex-col gap-4 h-[calc(100vh-140px)] overflow-hidden">
         
         {/* --- Header Control --- */}
