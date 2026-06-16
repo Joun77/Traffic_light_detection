@@ -1,29 +1,30 @@
 import psycopg2
 import time
+import os
 
 def init_database():
     print("--- กำลังเตรียมระบบฐานข้อมูล ---")
     retries = 5
+    
+    db_host = os.getenv("DB_HOST", "localhost")
+    db_name = os.getenv("DB_NAME", "traffic_monitoring")
+    db_user = os.getenv("DB_USER", "joun")
+    db_pass = os.getenv("DB_PASS", "traffic_pass")
+    db_port = os.getenv("DB_PORT", "5432")
+
     while retries > 0:
         try:
-            # เชื่อมต่อฐานข้อมูล (Local Docker)
+            # เชื่อมต่อฐานข้อมูล
             conn = psycopg2.connect(
-                host="localhost",
-                database="traffic_monitoring",
-                user="joun",
-                password="traffic_pass",
-                port="5432"
+                host=db_host,
+                database=db_name,
+                user=db_user,
+                password=db_pass,
+                port=db_port
             )
             cur = conn.cursor()
 
             # สร้างตาราง violations
-            # id: ลำดับรายการ
-            # vehicle_id: ID จาก YOLO Tracker
-            # vehicle_type: car, motorcycle, etc.
-            # time_stamp: วันเวลาที่เกิดเหตุ
-            # light_status: สถานะไฟจราจรตอนนั้น (ควรจะเป็น RED)
-            # image_path: ที่เก็บไฟล์รูปหลักฐาน
-            # video_path: ที่เก็บไฟล์วิดีโอหลักฐาน
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS violations (
                     id SERIAL PRIMARY KEY,
@@ -35,9 +36,38 @@ def init_database():
                     video_path TEXT
                 );
             """)
+
+            # สร้างตาราง cameras (กล้องวงจรปิด)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS cameras (
+                    id SERIAL PRIMARY KEY,
+                    camera_id VARCHAR(50) UNIQUE,
+                    location_name VARCHAR(255),
+                    village VARCHAR(100),
+                    district VARCHAR(100),
+                    province VARCHAR(100),
+                    is_active BOOLEAN DEFAULT TRUE,
+                    rtsp_url TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+
+            # เพิ่มข้อมูลตัวอย่างกล้อง (ถ้ายังไม่มี)
+            cur.execute("SELECT COUNT(*) FROM cameras")
+            if cur.fetchone()[0] == 0:
+                sample_cameras = [
+                    ('CAM-001', 'สี่แยกประตูไซ', 'เวียงจันทน์', 'จันทะบูลี', 'นครหลวงเวียงจันทน์', True),
+                    ('CAM-002', 'สี่แยกธาตุหลวง', 'ธาตุหลวง', 'ไซเสดถา', 'นครหลวงเวียงจันทน์', True),
+                    ('CAM-003', 'สามแยกดงโดก', 'ดงโดก', 'ไซทานี', 'นครหลวงเวียงจันทน์', False),
+                ]
+                for cam in sample_cameras:
+                    cur.execute("""
+                        INSERT INTO cameras (camera_id, location_name, village, district, province, is_active)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                    """, cam)
             
             conn.commit()
-            print("✅ สร้างตาราง violations สำเร็จ!")
+            print("✅ เตรียมตาราง violations และ cameras สำเร็จ!")
             
             cur.close()
             conn.close()

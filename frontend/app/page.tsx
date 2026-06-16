@@ -8,13 +8,20 @@ import {
   AlarmClock,
   BookOpen,
   BarChart3,
-  RotateCw,
-  Maximize2,
   Video,
   Car,
   CalendarDays,
-  Clock
+  Clock,
+  ChevronDown,
+  Maximize2
 } from "lucide-react"
+import { cn } from "@/lib/utils"
+import { translateLightStatus, translateVehicleType, getLightStatusColor } from "@/lib/localization"
+
+interface CCTV {
+  id: number
+  is_active: boolean
+}
 
 interface SummaryData {
   total_violations: number
@@ -43,20 +50,27 @@ export default function HomePage() {
   const [summaryAll, setSummaryAll] = useState<SummaryData | null>(null)
   const [summaryToday, setSummaryToday] = useState<SummaryData | null>(null)
   const [recentViolations, setViolations] = useState<Violation[]>([])
+  const [cameras, setCameras] = useState<CCTV[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedImage, setSelectedImage] = useState<string | null>(null)
+
+  // Period Filter State
+  const [period, setPeriod] = useState<7 | 30>(7)
+  const [isFilterOpen, setIsFilterOpen] = useState(false)
 
   const fetchData = async () => {
     setLoading(true)
     try {
-      const [sumAllRes, sumDayRes, recentRes] = await Promise.all([
+      const [sumAllRes, sumDayRes, recentRes, camRes] = await Promise.all([
         fetch("http://localhost:8000/violation-summary?period=all"),
         fetch("http://localhost:8000/violation-summary?period=day"),
-        fetch("http://localhost:8000/violations?limit=5")
+        fetch("http://localhost:8000/violations?limit=5"),
+        fetch("http://localhost:8000/cameras")
       ])
       if (sumAllRes.ok) setSummaryAll(await sumAllRes.json())
       if (sumDayRes.ok) setSummaryToday(await sumDayRes.json())
       if (recentRes.ok) setViolations(await recentRes.json())
+      if (camRes.ok) setCameras(await camRes.json())
     } catch (err) {
       console.error("Dashboard fetch error:", err)
     } finally {
@@ -68,9 +82,11 @@ export default function HomePage() {
     fetchData()
   }, [])
 
+  const activeCamerasCount = cameras.filter(c => c.is_active).length
+
   const statusRows = [
     { label: "ລາຍການລົດລ່ວງໄຟແດງໂດຍລວມທັງໝົດ", value: summaryAll?.total_violations || 0, color: "bg-rose-500 text-white" },
-    { label: "ລາຍການລົດລ່ວງໄຟແດງພາຍໃນມື້ນີ້", value: summaryToday?.total_violations || 0, color: "bg-status-green text-white" },
+    { label: "ລາຍການລົດລ່ວງໄຟແດງພາຍໃນມື້ນີ້", value: summaryToday?.total_violations || 0, color: "bg-emerald-500 text-white" },
   ]
 
   return (
@@ -80,9 +96,20 @@ export default function HomePage() {
         <Card className="p-0 overflow-hidden">
           <div className="flex items-center justify-between border-b border-border px-5 py-4 bg-panel/50">
             <h2 className="text-lg font-bold">ສະຫຼຸບ ແລະ ລາຍງານ</h2>
-            <div className="flex items-center gap-3 text-muted-foreground">
-              <button onClick={fetchData}><RotateCw className={`size-5 ${loading ? 'animate-spin' : ''}`} /></button>
-              <Maximize2 className="size-5" aria-hidden="true" />
+            <div className="relative">
+               <button 
+                onClick={() => setIsFilterOpen(!isFilterOpen)}
+                className="flex items-center gap-1 text-xs font-bold text-sky-400 bg-sky-500/10 px-3 py-1.5 rounded-lg border border-sky-500/20"
+               >
+                  <span>{period === 7 ? "7 ມື້ຫຼ້າສຸດ" : "30 ມື້ຫຼ້າສຸດ"}</span>
+                  <ChevronDown className={cn("size-3 transition-transform", isFilterOpen && "rotate-180")} />
+               </button>
+               {isFilterOpen && (
+                 <div className="absolute top-full right-0 mt-1 w-32 bg-slate-900 border border-border rounded-xl shadow-xl z-50 overflow-hidden">
+                    <button onClick={() => { setPeriod(7); setIsFilterOpen(false); }} className="w-full text-left px-4 py-2 text-xs hover:bg-white/5">7 ມື້ຫຼ້າສຸດ</button>
+                    <button onClick={() => { setPeriod(30); setIsFilterOpen(false); }} className="w-full text-left px-4 py-2 text-xs hover:bg-white/5">30 ມື້ຫຼ້າສຸດ</button>
+                 </div>
+               )}
             </div>
           </div>
           <ul>
@@ -109,7 +136,7 @@ export default function HomePage() {
               <Calendar className="size-6 text-sky-400" aria-hidden="true" />
               <span className="text-base font-medium">ວັນທີ/ເດືອນ/ປີ</span>
             </div>
-            <p className="mt-6 text-3xl font-bold">
+            <p className="mt-6 text-3xl font-bold text-brand-foreground">
               <RealTimeClock type="date" />
             </p>
           </Card>
@@ -119,7 +146,7 @@ export default function HomePage() {
               <AlarmClock className="size-6 text-sky-400" aria-hidden="true" />
               <span className="text-base font-medium">ເວລາ</span>
             </div>
-            <p className="mt-6 text-3xl font-bold">
+            <p className="mt-6 text-3xl font-bold text-brand-foreground">
               <RealTimeClock type="time" />
             </p>
           </Card>
@@ -129,13 +156,13 @@ export default function HomePage() {
               <BookOpen className="size-6 text-sky-400" aria-hidden="true" />
               <span className="text-base font-medium">ຈຸດຕິດຕັ້ງກ້ອງ</span>
             </div>
-            <p className="mt-4 flex items-center gap-2 text-3xl font-bold">
-              1 <Video className="size-6 text-muted-foreground" aria-hidden="true" />
+            <p className="mt-4 flex items-center gap-2 text-3xl font-bold text-brand-foreground">
+              {cameras.length} <Video className="size-6 text-muted-foreground" aria-hidden="true" />
             </p>
             <div className="mt-4 space-y-1 text-sm border-t border-border pt-4">
               <div className="flex justify-between">
-                <span className="text-muted-foreground">ສະຖານະ</span>
-                <span className="font-bold text-status-green">ກຳລັງເຮັດວຽກ</span>
+                <span className="text-muted-foreground">ກຳລັງເຮັດວຽກ</span>
+                <span className="font-bold text-status-green">{activeCamerasCount} ກ້ອງ</span>
               </div>
             </div>
           </Card>
@@ -143,15 +170,15 @@ export default function HomePage() {
           <Card>
             <div className="flex items-center gap-2 text-muted-foreground">
               <BarChart3 className="size-6 text-sky-400" aria-hidden="true" />
-              <span className="text-base font-medium">7 ມື້ຫຼ້າສຸດ</span>
+              <span className="text-base font-medium">{period} ມື້ຫຼ້າສຸດ</span>
             </div>
-            <p className="mt-4 flex items-center gap-2 text-3xl font-bold">
-              {summaryAll?.daily_stats.slice(-7).reduce((acc, curr) => acc + curr.count, 0) || 0} <Car className="size-6 text-muted-foreground" aria-hidden="true" />
+            <p className="mt-4 flex items-center gap-2 text-3xl font-bold text-brand-foreground">
+              { (summaryAll?.daily_stats || []).slice(-period).reduce((acc, curr) => acc + curr.count, 0) || 0} <Car className="size-6 text-muted-foreground" aria-hidden="true" />
             </p>
             <div className="mt-4 flex justify-between text-sm border-t border-border pt-4">
-              <span className="text-muted-foreground">ສະເລ່ย/ວັນ</span>
-              <span className="font-bold">
-                {Math.round((summaryAll?.daily_stats.slice(-7).reduce((acc, curr) => acc + curr.count, 0) || 0) / 7)}
+              <span className="text-muted-foreground">ສະເລ່ຍ/ວັນ</span>
+              <span className="font-bold text-brand-foreground">
+                {Math.round(((summaryAll?.daily_stats || []).slice(-period).reduce((acc, curr) => acc + curr.count, 0) || 0) / period)}
               </span>
             </div>
           </Card>
@@ -183,24 +210,34 @@ export default function HomePage() {
                 </tr>
               ) : (
                 recentViolations.map((v, i) => (
-                  <tr key={v.id} className="border-b border-border hover:bg-muted/30">
+                  <tr key={v.id} className="border-b border-border hover:bg-muted/30 transition-colors">
                     <td className="px-4 py-4">{i + 1}</td>
-                    <td className="px-4 py-4 font-mono font-bold">#{v.vehicle_id}</td>
-                    <td className="px-4 py-4 uppercase font-bold text-xs">{v.vehicle_type}</td>
+                    <td className="px-4 py-4 font-mono font-bold text-brand-foreground">VkH-{v.vehicle_id}</td>
+                    <td className="px-4 py-4">
+                       <span className="px-2 py-0.5 rounded-lg bg-sky-500/10 text-sky-500 font-bold text-[10px] uppercase">
+                          {translateVehicleType(v.vehicle_type)}
+                       </span>
+                    </td>
                     <td className="px-4 py-4">
                       <div className="flex flex-col text-[10px]">
-                        <span className="flex items-center gap-1 font-bold text-muted-foreground"><CalendarDays className="size-3" /> {new Date(v.time_stamp).toLocaleDateString()}</span>
-                        <span className="flex items-center gap-1 font-black"><Clock className="size-3" /> {new Date(v.time_stamp).toLocaleTimeString()}</span>
+                        <span className="flex items-center gap-1 font-bold text-muted-foreground"><CalendarDays className="size-3" /> {new Date(v.time_stamp).toLocaleDateString('lo-LA')}</span>
+                        <span className="flex items-center gap-1 font-black"><Clock className="size-3" /> {new Date(v.time_stamp).toLocaleTimeString('lo-LA')}</span>
                       </div>
                     </td>
                     <td className="px-4 py-4 text-center">
-                      <button onClick={() => setSelectedImage(`http://localhost:8000/${v.image_path}`)}>
-                        <img src={`http://localhost:8000/${v.image_path}`} alt="Evidence" className="h-10 w-16 rounded object-cover border border-border mx-auto hover:opacity-80" />
+                      <button 
+                        onClick={() => setSelectedImage(`http://localhost:8000/${v.image_path}`)}
+                        className="relative inline-block group"
+                      >
+                        <img src={`http://localhost:8000/${v.image_path}`} alt="Evidence" className="h-10 w-16 rounded object-cover border border-border mx-auto hover:opacity-80 transition-opacity" />
+                        <div className="absolute inset-0 bg-sky-500/20 opacity-0 group-hover:opacity-100 rounded transition-opacity flex items-center justify-center">
+                           <Maximize2 className="size-3 text-white" />
+                        </div>
                       </button>
                     </td>
                     <td className="px-4 py-4 text-center">
-                      <span className="px-2 py-1 rounded-full bg-status-red/10 text-status-red text-[10px] font-black uppercase border border-status-red/20">
-                        {v.light_status}
+                      <span className={cn("px-3 py-1 rounded-full text-[10px] font-black uppercase border", getLightStatusColor(v.light_status))}>
+                        {translateLightStatus(v.light_status)}
                       </span>
                     </td>
                   </tr>
@@ -214,16 +251,16 @@ export default function HomePage() {
       {/* Image Modal */}
       {selectedImage && (
         <div 
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4"
+          className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/90 p-4 backdrop-blur-md"
           onClick={() => setSelectedImage(null)}
         >
-          <div className="relative max-w-4xl w-full bg-panel rounded-3xl overflow-hidden shadow-2xl" onClick={e => e.stopPropagation()}>
+          <div className="relative max-w-4xl w-full bg-panel rounded-3xl overflow-hidden shadow-2xl border border-white/10" onClick={e => e.stopPropagation()}>
             <img src={selectedImage} alt="Violation Evidence" className="w-full h-auto" />
             <button 
               onClick={() => setSelectedImage(null)}
               className="absolute top-4 right-4 bg-black/50 text-white p-2 rounded-full hover:bg-black transition-colors"
             >
-              ✕
+              <Maximize2 className="size-5 rotate-45" />
             </button>
           </div>
         </div>

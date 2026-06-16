@@ -6,8 +6,9 @@ import cv2
 import asyncio
 import numpy as np
 import signal
+import time
 from datetime import datetime, date
-from fastapi import FastAPI, UploadFile, File, BackgroundTasks, Request
+from fastapi import FastAPI, UploadFile, File, BackgroundTasks, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -16,18 +17,22 @@ from typing import List, Optional
 from fastapi.staticfiles import StaticFiles
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from starlette.middleware.base import BaseHTTPMiddleware
+
+# --- Custom Middleware for CORS on Static Files ---
+# Ensures all files, including those from StaticFiles, have CORS headers
+class StaticCORSMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "*"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        return response
 
 app = FastAPI(title="Traffic Monitoring AI API")
 
-# Database Config
-DB_CONFIG = {
-    "host": "localhost",
-    "database": "traffic_monitoring",
-    "user": "joun",
-    "password": "traffic_pass",
-    "port": "5432"
-}
-
+# Add Middlewares
+app.add_middleware(StaticCORSMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -40,11 +45,16 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_DIR = os.path.join(BASE_DIR, "../data/uploads")
 EVIDENCE_DIR = os.path.join(BASE_DIR, "../outputs/evidences")
 CONFIG_FILE = os.path.join(BASE_DIR, "../data/roi_config.json")
+DATA_DIR = os.path.join(BASE_DIR, "../data")
 
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(EVIDENCE_DIR, exist_ok=True)
+os.makedirs(os.path.join(EVIDENCE_DIR, "images"), exist_ok=True)
+os.makedirs(os.path.join(EVIDENCE_DIR, "videos"), exist_ok=True)
 
 app.mount("/evidences", StaticFiles(directory=EVIDENCE_DIR), name="evidences")
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+app.mount("/static-data", StaticFiles(directory=DATA_DIR), name="static-data")
 
 # --- 🚀 Real-time Event System (SSE) ---
 class Notifier:
@@ -68,7 +78,7 @@ notifier = Notifier()
 # --- 🧠 Global State ---
 latest_frame = None
 latest_light_status = "unknown"
-latest_video = "IMG_9582.MOV"
+latest_video = None
 ai_process = None
 
 class ROIConfig(BaseModel):
@@ -77,6 +87,7 @@ class ROIConfig(BaseModel):
     traffic_light_box: Optional[List[int]] = None
     vehicle_zone: Optional[List[int]] = None
     scale: Optional[float] = 1.0
+    video_path: Optional[str] = None
 
 class ViolationReport(BaseModel):
     vehicle_id: int
@@ -85,6 +96,13 @@ class ViolationReport(BaseModel):
     image_path: str
     video_path: str
 
+class CameraUpdate(BaseModel):
+    location_name: Optional[str] = None
+    village: Optional[str] = None
+    district: Optional[str] = None
+    province: Optional[str] = None
+    is_active: Optional[bool] = None
+
 # --- 🚦 Light Status Endpoint ---
 
 @app.post("/set-current-light")
@@ -92,7 +110,6 @@ async def set_current_light(data: dict):
     global latest_light_status
     status = data.get("status", "unknown")
     latest_light_status = status
-    print(f"🚦 [BACKEND] Received Light Status: {status}")
     await notifier.notify({"type": "light_status", "data": status})
     return {"status": "success", "color": status}
 
@@ -102,9 +119,14 @@ async def get_light_status():
 
 # --- 📊 Database & Violation Endpoints ---
 
+import logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger("TrafficAPI")
+
 @app.post("/violations")
 async def add_violation(report: ViolationReport):
     try:
+        logger.info(f"💾 Saving violation: Vehicle {report.vehicle_id} ({report.vehicle_type})")
         conn = psycopg2.connect(**DB_CONFIG)
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute("""
@@ -117,11 +139,13 @@ async def add_violation(report: ViolationReport):
         conn.close()
 
         violation_data = dict(new_violation)
+        logger.info(f"✅ Violation saved successfully with ID: {violation_data.get('id')}")
         await notifier.notify({"type": "new_violation", "data": violation_data})
         return {"status": "success", "data": violation_data}
     except Exception as e:
-        print(f"❌ DB Error: {e}")
+        logger.error(f"❌ Error saving violation: {str(e)}")
         return {"status": "error", "message": str(e)}
+
 
 @app.get("/violations")
 async def get_violations(limit: int = 10):
@@ -130,22 +154,8 @@ async def get_violations(limit: int = 10):
         cur = conn.cursor(cursor_factory=RealDictCursor)
         cur.execute("SELECT * FROM violations ORDER BY time_stamp DESC LIMIT %s", (limit,))
         rows = cur.fetchall()
-        cur.close()
-        conn.close()
+        cur.close(); conn.close()
         return [dict(row) for row in rows]
-    except Exception as e:
-        return {"error": str(e)}
-
-@app.get("/violation-stats")
-async def get_violation_stats():
-    try:
-        conn = psycopg2.connect(**DB_CONFIG)
-        cur = conn.cursor()
-        cur.execute("SELECT COUNT(*) FROM violations")
-        count = cur.fetchone()[0]
-        cur.close()
-        conn.close()
-        return {"total_violations": count}
     except Exception as e:
         return {"error": str(e)}
 
@@ -161,27 +171,109 @@ async def get_violation_summary(period: str = "all"):
 
         cur.execute(f"SELECT COUNT(*) as total FROM violations {where_clause}")
         total = cur.fetchone()['total']
-
         cur.execute(f"SELECT vehicle_type, COUNT(*) as count FROM violations {where_clause} GROUP BY vehicle_type")
         by_type = [dict(r) for r in cur.fetchall()]
-
-        cur.execute(f"""
-            SELECT TO_CHAR(time_stamp, 'YYYY-MM-DD') as date, COUNT(*) as count 
-            FROM violations {where_clause} GROUP BY date ORDER BY date ASC
-        """)
+        cur.execute(f"SELECT TO_CHAR(time_stamp, 'YYYY-MM-DD') as date, COUNT(*) as count FROM violations {where_clause} GROUP BY date ORDER BY date ASC")
         daily_stats = [dict(r) for r in cur.fetchall()]
 
         cur.close(); conn.close()
         return {"total_violations": total, "by_type": by_type, "daily_stats": daily_stats}
     except Exception as e:
-        print(f"❌ Summary Error: {e}")
         return {"error": str(e)}
+
+@app.delete("/violations/{violation_id}")
+async def delete_violation(violation_id: int):
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        cur = conn.cursor()
+        cur.execute("DELETE FROM violations WHERE id = %s", (violation_id,))
+        conn.commit(); cur.close(); conn.close()
+        return {"status": "success"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+# --- 📷 CCTV Camera Endpoints ---
+
+def convert_video_task(camera_db_id: int, temp_path: str, output_path: str, output_filename: str):
+    try:
+        cap = cv2.VideoCapture(temp_path)
+        w  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'avc1'), fps, (w, h))
+        if not out.isOpened(): out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret: break
+            out.write(frame)
+        cap.release(); out.release()
+        if os.path.exists(temp_path): os.remove(temp_path)
+        conn = psycopg2.connect(**DB_CONFIG)
+        cur = conn.cursor()
+        cur.execute("UPDATE cameras SET rtsp_url = %s WHERE id = %s", (f"uploads/{output_filename}", camera_db_id))
+        conn.commit(); cur.close(); conn.close()
+    except Exception as e: print(f"Background Err: {e}")
+
+@app.get("/cameras")
+async def get_cameras():
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT * FROM cameras ORDER BY id ASC")
+        rows = cur.fetchall(); cur.close(); conn.close()
+        return [dict(row) for row in rows]
+    except Exception as e: return {"error": str(e)}
+
+@app.post("/cameras/{camera_db_id}/upload-video")
+async def upload_camera_video(camera_db_id: int, background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+    try:
+        temp_path = os.path.join(UPLOAD_DIR, f"temp_{camera_db_id}_{file.filename}")
+        with open(temp_path, "wb") as buffer: shutil.copyfileobj(file.file, buffer)
+        output_filename = f"cam_{camera_db_id}_{int(time.time())}.mp4"
+        output_path = os.path.join(UPLOAD_DIR, output_filename)
+        background_tasks.add_task(convert_video_task, camera_db_id, temp_path, output_path, output_filename)
+        return {"status": "processing"}
+    except Exception as e: return {"status": "error", "message": str(e)}
+
+@app.delete("/cameras/{camera_db_id}/video")
+async def delete_camera_video(camera_db_id: int):
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT rtsp_url FROM cameras WHERE id = %s", (camera_db_id,))
+        row = cur.fetchone()
+        if row and row['rtsp_url']:
+            abs_p = os.path.join(BASE_DIR, "..", row['rtsp_url'])
+            if os.path.exists(abs_p): os.remove(abs_p)
+            cur.execute("UPDATE cameras SET rtsp_url = NULL WHERE id = %s", (camera_db_id,))
+            conn.commit()
+        cur.close(); conn.close()
+        return {"status": "success"}
+    except Exception as e: return {"status": "error", "message": str(e)}
+
+@app.put("/cameras/{camera_db_id}")
+async def update_camera(camera_db_id: int, cam_data: CameraUpdate):
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        cur = conn.cursor()
+        fields = []
+        params = []
+        if cam_data.location_name: fields.append("location_name = %s"); params.append(cam_data.location_name)
+        if cam_data.village: fields.append("village = %s"); params.append(cam_data.village)
+        if cam_data.district: fields.append("district = %s"); params.append(cam_data.district)
+        if cam_data.province: fields.append("province = %s"); params.append(cam_data.province)
+        if cam_data.is_active is not None: fields.append("is_active = %s"); params.append(cam_data.is_active)
+        if not fields: return {"status": "no_change"}
+        params.append(camera_db_id)
+        cur.execute(f"UPDATE cameras SET {', '.join(fields)} WHERE id = %s", tuple(params))
+        conn.commit(); cur.close(); conn.close()
+        return {"status": "success"}
+    except Exception as e: return {"status": "error", "message": str(e)}
 
 # --- 🎥 System Routes ---
 
 @app.get("/")
-def read_root():
-    return {"status": "Online", "ai_running": ai_process is not None, "light": latest_light_status}
+def read_root(): return {"status": "Online"}
 
 @app.get("/events")
 async def event_stream(request: Request):
@@ -191,36 +283,10 @@ async def event_stream(request: Request):
             while True:
                 if await request.is_disconnected(): break
                 data = await queue.get()
-                # 🛠️ Robust JSON Serialization for SSE
-                try:
-                    json_data = json.dumps(data, default=str)
-                    yield f"data: {json_data}\n\n"
-                except Exception as e:
-                    print(f"❌ SSE Error: {e}")
-        except asyncio.CancelledError: pass
+                yield f"data: {json.dumps(data, default=str)}\n\n"
+        except: pass
         finally: notifier.unsubscribe(queue)
     return StreamingResponse(stream(), media_type="text/event-stream")
-
-@app.post("/upload-video")
-async def upload_video(file: UploadFile = File(...)):
-    global latest_video
-    file_path = os.path.join(UPLOAD_DIR, file.filename)
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-    latest_video = file_path
-    return {"message": "Upload successful", "filename": file.filename}
-
-@app.post("/set-roi")
-async def set_roi(config: ROIConfig):
-    with open(CONFIG_FILE, "w") as f:
-        json.dump(config.dict(), f, indent=2)
-    return {"status": "success"}
-
-@app.get("/get-roi")
-async def get_roi():
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, "r") as f: return json.load(f)
-    return {"roi_y": None, "roi_x": None, "traffic_light_box": None, "vehicle_zone": None, "scale": 1.0}
 
 @app.post("/update-frame")
 async def update_frame(request: Request):
@@ -238,32 +304,63 @@ async def frame_generator():
     while True:
         if latest_frame is not None:
             ret, buffer = cv2.imencode('.jpg', latest_frame)
-            if ret:
-                yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+            if ret: yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
         else:
-            black_frame = np.zeros((480, 640, 3), dtype=np.uint8)
-            cv2.putText(black_frame, "Waiting for AI Feed...", (150, 240), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2)
-            _, buffer = cv2.imencode('.jpg', black_frame)
-            yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+            black = np.zeros((480, 640, 3), dtype=np.uint8)
+            cv2.putText(black, "Waiting for Feed...", (180, 240), 1, 1.5, (255,255,255), 2)
+            _, buffer = cv2.imencode('.jpg', black)
+            yield (b'--frame\r\nContent-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
         await asyncio.sleep(0.04)
 
 @app.get("/video-feed")
 async def video_feed():
     return StreamingResponse(frame_generator(), media_type="multipart/x-mixed-replace; boundary=frame")
 
+@app.post("/set-roi")
+async def set_roi(config: ROIConfig):
+    # Use model_dump for Pydantic V2 compatibility
+    with open(CONFIG_FILE, "w") as f: json.dump(config.model_dump(), f, indent=2)
+    return {"status": "success"}
+
+@app.post("/set-roi-reference")
+async def set_roi_reference(file: UploadFile = File(...)):
+    try:
+        ref_path = os.path.join(DATA_DIR, "roi_reference.jpg")
+        with open(ref_path, "wb") as buffer: shutil.copyfileobj(file.file, buffer)
+        return {"status": "success", "url": "/static-data/roi_reference.jpg"}
+    except Exception as e: return {"status": "error", "message": str(e)}
+
+@app.get("/get-roi")
+async def get_roi():
+    ref_exists = os.path.exists(os.path.join(DATA_DIR, "roi_reference.jpg"))
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE, "r") as f: 
+            data = json.load(f)
+            data["has_reference"] = ref_exists
+            return data
+    return {"roi_y": None, "roi_x": None, "traffic_light_box": None, "vehicle_zone": None, "scale": 1.0, "has_reference": ref_exists}
+
 @app.post("/start-detection")
 async def start_detection(config: Optional[ROIConfig] = None):
     global ai_process, latest_frame, latest_video
-    if ai_process is not None: return {"status": "error", "message": "AI already running"}
+    if ai_process is not None: return {"status": "error"}
     latest_frame = None
-    cmd = ["python3", "vehicle_detection_main.py", "--video", latest_video]
+    video_to_use = None
+    if config and config.video_path:
+        if config.video_path.startswith("uploads/"):
+            video_to_use = os.path.join(UPLOAD_DIR, config.video_path.replace("uploads/", ""))
+        else: video_to_use = os.path.join(BASE_DIR, "..", config.video_path)
+    
+    if not video_to_use or not os.path.exists(video_to_use):
+        return {"status": "error", "message": "Video not found"}
+
+    cmd = ["python3", "vehicle_detection_main.py", "--video", video_to_use]
     if config:
         if config.roi_y is not None: cmd.extend(["--roi_y", str(config.roi_y)])
         if config.roi_x is not None: cmd.extend(["--roi_x", str(config.roi_x)])
         if config.traffic_light_box: cmd.extend(["--tl_box", ",".join(map(str, config.traffic_light_box))])
         if config.vehicle_zone: cmd.extend(["--veh_zone", ",".join(map(str, config.vehicle_zone))])
+    
     ai_process = subprocess.Popen(cmd)
     return {"status": "success"}
 
@@ -275,6 +372,14 @@ async def stop_detection():
         ai_process = None
     latest_frame = None
     return {"status": "stopped"}
+
+DB_CONFIG = {
+    "host":     os.getenv("DB_HOST", "localhost"),
+    "database": os.getenv("DB_NAME", "traffic_monitoring"),
+    "user":     os.getenv("DB_USER", "joun"),
+    "password": os.getenv("DB_PASS", "traffic_pass"),
+    "port":     os.getenv("DB_PORT", "5432")
+}
 
 if __name__ == "__main__":
     import uvicorn
