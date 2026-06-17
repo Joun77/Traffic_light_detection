@@ -189,26 +189,26 @@ export default function UploadRoiPage() {
               </div>
               <div className={cn("grid gap-6", isPortrait ? "grid-cols-1" : "grid-cols-1 lg:grid-cols-3")}>
                 <div className={cn("bg-slate-900 border border-white/5 p-8 rounded-[2.5rem] shadow-xl", !isPortrait && "lg:col-span-2")}>
-                   <h4 className="font-black text-sky-400 uppercase tracking-[0.2em] text-[10px] mb-6 flex items-center gap-2 opacity-60"><Settings2 className="size-3" /> ລາຍລະອຽດພິກັດ ROI</h4>
+                   <h4 className="font-black text-sky-400 uppercase tracking-[0.2em] text-xs mb-6 flex items-center gap-2 opacity-60"><Settings2 className="size-4" /> ລາຍລະອຽດພິກັດ ROI</h4>
                    <div className="grid grid-cols-3 gap-3">
-                      <div className="p-4 bg-white/5 rounded-2xl border border-white/5 flex flex-col gap-1 text-white">
-                        <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">ເສັ້ນນອນ (Y)</span>
-                        <span className="font-black text-white text-base">{configPreview?.roi_y}</span>
+                      <div className="p-5 bg-white/5 rounded-2xl border border-white/5 flex flex-col gap-1.5 text-white">
+                        <span className="text-[11px] font-black text-slate-500 uppercase tracking-widest">ເສັ້ນນອນ (Y)</span>
+                        <span className="font-black text-white text-2xl">{configPreview?.roi_y}</span>
                       </div>
-                      <div className="p-4 bg-white/5 rounded-2xl border border-white/5 flex flex-col gap-1">
-                        <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">ເສັ້ນຕັ້ງ (X)</span>
-                        <span className="font-black text-white text-base">{configPreview?.roi_x}</span>
+                      <div className="p-5 bg-white/5 rounded-2xl border border-white/5 flex flex-col gap-1.5">
+                        <span className="text-[11px] font-black text-slate-500 uppercase tracking-widest">ເສັ້ນຕັ້ງ (X)</span>
+                        <span className="font-black text-white text-2xl">{configPreview?.roi_x}</span>
                       </div>
-                      <div className="p-4 bg-white/5 rounded-2xl border border-white/5 flex flex-col gap-1 text-white">
-                        <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">ຂອບເຂດໄຟ</span>
-                        <span className="font-black text-emerald-400 text-[9px] uppercase tracking-tighter text-white">ກຳນົດແລ້ວ</span>
+                      <div className="p-5 bg-white/5 rounded-2xl border border-white/5 flex flex-col gap-1.5 text-white">
+                        <span className="text-[11px] font-black text-slate-500 uppercase tracking-widest">ຂອບເຂດໄຟ</span>
+                        <span className="font-black text-emerald-400 text-xs uppercase tracking-widest mt-1">ກຳນົດແລ້ວ</span>
                       </div>
                    </div>
                    <div className="mt-8 flex gap-3">
-                      <button onClick={() => setStep("CONFIGURE")} className="flex-1 flex items-center justify-center gap-3 py-4 bg-panel border border-white/5 rounded-2xl font-black text-[10px] uppercase tracking-widest text-white hover:bg-slate-800 transition-all active:scale-95">
+                      <button onClick={() => setStep("CONFIGURE")} className="flex-1 flex items-center justify-center gap-3 py-4 bg-panel border border-white/5 rounded-2xl font-black text-xs uppercase tracking-widest text-white hover:bg-slate-800 transition-all active:scale-95">
                          <RefreshCcw className="size-4 text-sky-400" /> ແກ້ໄຂໃໝ່
                       </button>
-                      <button onClick={() => setStep("UPLOAD")} className="flex-1 flex items-center justify-center gap-3 py-4 bg-panel border border-white/5 rounded-2xl font-black text-[10px] uppercase tracking-widest text-white hover:bg-slate-800 transition-all active:scale-95">
+                      <button onClick={() => setStep("UPLOAD")} className="flex-1 flex items-center justify-center gap-3 py-4 bg-panel border border-white/5 rounded-2xl font-black text-xs uppercase tracking-widest text-white hover:bg-slate-800 transition-all active:scale-95">
                          <ImageIcon className="size-4 text-emerald-400" /> ປ່ຽນແຫຼ່ງຂໍ້ມູນ
                       </button>
                    </div>

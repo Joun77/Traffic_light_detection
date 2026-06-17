@@ -24,10 +24,11 @@ def init_database():
             )
             cur = conn.cursor()
 
-            # สร้างตาราง violations
+            # สร้างตาราง violations พร้อมลิงก์กับ cameras
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS violations (
                     id SERIAL PRIMARY KEY,
+                    camera_id INTEGER REFERENCES cameras(id) ON DELETE SET NULL,
                     vehicle_id INTEGER,
                     vehicle_type VARCHAR(50),
                     time_stamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -35,6 +36,17 @@ def init_database():
                     image_path TEXT,
                     video_path TEXT
                 );
+            """)
+
+            # 🛠️ Migration: ตรวจสอบและเพิ่มคอลัมน์ camera_id หากยังไม่มี (สำหรับเคสที่ตารางมีอยู่แล้ว)
+            cur.execute("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='violations' AND column_name='camera_id') THEN
+                        ALTER TABLE violations ADD COLUMN camera_id INTEGER REFERENCES cameras(id) ON DELETE SET NULL;
+                    END IF;
+                END
+                $$;
             """)
 
             # สร้างตาราง cameras (กล้องวงจรปิด)

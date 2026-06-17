@@ -8,7 +8,7 @@ import numpy as np
 import signal
 import time
 from datetime import datetime, date
-from fastapi import FastAPI, UploadFile, File, BackgroundTasks, Request, Response
+from fastapi import FastAPI, UploadFile, File, BackgroundTasks, Request, Response, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -20,7 +20,6 @@ from psycopg2.extras import RealDictCursor
 from starlette.middleware.base import BaseHTTPMiddleware
 
 # --- Custom Middleware for CORS on Static Files ---
-# Ensures all files, including those from StaticFiles, have CORS headers
 class StaticCORSMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         response = await call_next(request)
@@ -67,7 +66,8 @@ class Notifier:
         return queue
 
     def unsubscribe(self, queue):
-        self.connections.remove(queue)
+        if queue in self.connections:
+            self.connections.remove(queue)
 
     async def notify(self, data):
         for queue in self.connections:
@@ -88,6 +88,8 @@ class ROIConfig(BaseModel):
     vehicle_zone: Optional[List[int]] = None
     scale: Optional[float] = 1.0
     video_path: Optional[str] = None
+    camera_id: Optional[int] = None
+    has_reference: Optional[bool] = None # Added to prevent 422 validation error
 
 class ViolationReport(BaseModel):
     vehicle_id: int
@@ -95,6 +97,7 @@ class ViolationReport(BaseModel):
     light_status: str
     image_path: str
     video_path: str
+    camera_id: Optional[int] = None
 
 class CameraUpdate(BaseModel):
     location_name: Optional[str] = None
@@ -126,20 +129,30 @@ logger = logging.getLogger("TrafficAPI")
 @app.post("/violations")
 async def add_violation(report: ViolationReport):
     try:
-        logger.info(f"💾 Saving violation: Vehicle {report.vehicle_id} ({report.vehicle_type})")
+        logger.info(f"💾 Saving violation: Vehicle {report.vehicle_id} from Camera {report.camera_id}")
         conn = psycopg2.connect(**DB_CONFIG)
         cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Explicitly list columns for safety
         cur.execute("""
-            INSERT INTO violations (vehicle_id, vehicle_type, light_status, image_path, video_path)
-            VALUES (%s, %s, %s, %s, %s) RETURNING *
-        """, (report.vehicle_id, report.vehicle_type, report.light_status, report.image_path, report.video_path))
-        new_violation = cur.fetchone()
+            INSERT INTO violations (vehicle_id, vehicle_type, light_status, image_path, video_path, camera_id)
+            VALUES (%s, %s, %s, %s, %s, %s) RETURNING id
+        """, (report.vehicle_id, report.vehicle_type, report.light_status, report.image_path, report.video_path, report.camera_id))
+        new_row = cur.fetchone()
         conn.commit()
-        cur.close()
-        conn.close()
+        
+        # 🔗 Enrichment: Get full details for the live notification
+        cur.execute("""
+            SELECT v.*, c.location_name, c.village, c.district, c.province 
+            FROM violations v
+            LEFT JOIN cameras c ON v.camera_id = c.id
+            WHERE v.id = %s
+        """, (new_row['id'],))
+        enriched_v = cur.fetchone()
+        
+        cur.close(); conn.close()
 
-        violation_data = dict(new_violation)
-        logger.info(f"✅ Violation saved successfully with ID: {violation_data.get('id')}")
+        violation_data = dict(enriched_v)
         await notifier.notify({"type": "new_violation", "data": violation_data})
         return {"status": "success", "data": violation_data}
     except Exception as e:
@@ -152,11 +165,26 @@ async def get_violations(limit: int = 10):
     try:
         conn = psycopg2.connect(**DB_CONFIG)
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute("SELECT * FROM violations ORDER BY time_stamp DESC LIMIT %s", (limit,))
+        # Verify if camera_id exists before joining (Safety Fallback)
+        cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'violations' AND column_name = 'camera_id'")
+        has_cam_id = cur.fetchone()
+        
+        if has_cam_id:
+            query = """
+                SELECT v.*, c.location_name, c.village, c.district, c.province 
+                FROM violations v
+                LEFT JOIN cameras c ON v.camera_id = c.id
+                ORDER BY v.time_stamp DESC LIMIT %s
+            """
+        else:
+            query = "SELECT * FROM violations ORDER BY time_stamp DESC LIMIT %s"
+            
+        cur.execute(query, (limit,))
         rows = cur.fetchall()
         cur.close(); conn.close()
         return [dict(row) for row in rows]
     except Exception as e:
+        logger.error(f"❌ Get violations error: {str(e)}")
         return {"error": str(e)}
 
 @app.get("/violation-summary")
@@ -185,20 +213,41 @@ async def get_violation_summary(period: str = "all"):
 async def delete_violation(violation_id: int):
     try:
         conn = psycopg2.connect(**DB_CONFIG)
-        cur = conn.cursor()
-        cur.execute("DELETE FROM violations WHERE id = %s", (violation_id,))
-        conn.commit(); cur.close(); conn.close()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT image_path, video_path FROM violations WHERE id = %s", (violation_id,))
+        row = cur.fetchone()
+        if row:
+            for key in ['image_path', 'video_path']:
+                if row[key]:
+                    abs_path = os.path.join(BASE_DIR, "..", "outputs", row[key])
+                    if os.path.exists(abs_path): os.remove(abs_path)
+            cur.execute("DELETE FROM violations WHERE id = %s", (violation_id,))
+            conn.commit()
+        cur.close(); conn.close()
         return {"status": "success"}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+    except Exception as e: return {"status": "error", "message": str(e)}
+
+@app.delete("/violations")
+async def delete_all_violations():
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        cur = conn.cursor()
+        cur.execute("DELETE FROM violations"); conn.commit()
+        cur.close(); conn.close()
+        for sub in ['images', 'videos']:
+            folder = os.path.join(EVIDENCE_DIR, sub)
+            if os.path.exists(folder):
+                for filename in os.listdir(folder):
+                    if filename.startswith("v_"): os.remove(os.path.join(folder, filename))
+        return {"status": "success"}
+    except Exception as e: return {"status": "error", "message": str(e)}
 
 # --- 📷 CCTV Camera Endpoints ---
 
 def convert_video_task(camera_db_id: int, temp_path: str, output_path: str, output_filename: str):
     try:
         cap = cv2.VideoCapture(temp_path)
-        w  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
         out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'avc1'), fps, (w, h))
         if not out.isOpened(): out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
@@ -256,8 +305,7 @@ async def update_camera(camera_db_id: int, cam_data: CameraUpdate):
     try:
         conn = psycopg2.connect(**DB_CONFIG)
         cur = conn.cursor()
-        fields = []
-        params = []
+        fields, params = [], []
         if cam_data.location_name: fields.append("location_name = %s"); params.append(cam_data.location_name)
         if cam_data.village: fields.append("village = %s"); params.append(cam_data.village)
         if cam_data.district: fields.append("district = %s"); params.append(cam_data.district)
@@ -293,8 +341,7 @@ async def update_frame(request: Request):
     global latest_frame
     try:
         contents = await request.body()
-        nparr = np.frombuffer(contents, np.uint8)
-        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        img = cv2.imdecode(np.frombuffer(contents, np.uint8), cv2.IMREAD_COLOR)
         if img is not None: latest_frame = img
         return {"status": "ok"}
     except: return {"status": "error"}
@@ -318,7 +365,6 @@ async def video_feed():
 
 @app.post("/set-roi")
 async def set_roi(config: ROIConfig):
-    # Use model_dump for Pydantic V2 compatibility
     with open(CONFIG_FILE, "w") as f: json.dump(config.model_dump(), f, indent=2)
     return {"status": "success"}
 
@@ -341,12 +387,13 @@ async def get_roi():
     return {"roi_y": None, "roi_x": None, "traffic_light_box": None, "vehicle_zone": None, "scale": 1.0, "has_reference": ref_exists}
 
 @app.post("/start-detection")
-async def start_detection(config: Optional[ROIConfig] = None):
-    global ai_process, latest_frame, latest_video
+async def start_detection(config: ROIConfig):
+    global ai_process, latest_frame
     if ai_process is not None: return {"status": "error"}
     latest_frame = None
     video_to_use = None
-    if config and config.video_path:
+    
+    if config.video_path:
         if config.video_path.startswith("uploads/"):
             video_to_use = os.path.join(UPLOAD_DIR, config.video_path.replace("uploads/", ""))
         else: video_to_use = os.path.join(BASE_DIR, "..", config.video_path)
@@ -355,11 +402,11 @@ async def start_detection(config: Optional[ROIConfig] = None):
         return {"status": "error", "message": "Video not found"}
 
     cmd = ["python3", "vehicle_detection_main.py", "--video", video_to_use]
-    if config:
-        if config.roi_y is not None: cmd.extend(["--roi_y", str(config.roi_y)])
-        if config.roi_x is not None: cmd.extend(["--roi_x", str(config.roi_x)])
-        if config.traffic_light_box: cmd.extend(["--tl_box", ",".join(map(str, config.traffic_light_box))])
-        if config.vehicle_zone: cmd.extend(["--veh_zone", ",".join(map(str, config.vehicle_zone))])
+    if config.camera_id: cmd.extend(["--camera_db_id", str(config.camera_id)])
+    if config.roi_y is not None: cmd.extend(["--roi_y", str(config.roi_y)])
+    if config.roi_x is not None: cmd.extend(["--roi_x", str(config.roi_x)])
+    if config.traffic_light_box: cmd.extend(["--tl_box", ",".join(map(str, config.traffic_light_box))])
+    if config.vehicle_zone: cmd.extend(["--veh_zone", ",".join(map(str, config.vehicle_zone))])
     
     ai_process = subprocess.Popen(cmd)
     return {"status": "success"}

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react"
 import { DashboardShell } from "@/components/dashboard-shell"
-import { StopCircle, RotateCcw, Clock, Car, Eye, Activity, ShieldAlert, CheckCircle2, ChevronDown, Camera, Printer, Play, X } from "lucide-react"
+import { StopCircle, RotateCcw, Clock, Car, Eye, Activity, ShieldAlert, CheckCircle2, ChevronDown, Camera, Printer, Play, X, ZoomIn, ZoomOut, Maximize2 } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { ConfirmModal } from "@/components/confirm-modal"
 import { PrintPreviewModal, Violation } from "@/components/print-preview-modal"
@@ -30,9 +30,17 @@ export default function MonitorPage() {
   const [lightStatus, setLightStatus] = useState<string>("unknown")
   
   const [selectedViolation, setSelectedViolation] = useState<Violation | null>(null)
+  const [selectedImage, setSelectedImage] = useState<string | null>(null)
+  const [selectedVideo, setSelectedVideo] = useState<string | null>(null)
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false)
   const [activeModal, setActiveModal] = useState<"stop" | null>(null)
   const [isProcessing, setIsProcessing] = useState(false)
+
+  // Zoom & Panning State
+  const [zoom, setZoom] = useState(1)
+  const [position, setPosition] = useState({ x: 0, y: 0 })
+  const [isDragging, setIsDragging] = useState(false)
+  const dragStart = useRef({ x: 0, y: 0 })
 
   useEffect(() => {
     setMounted(true)
@@ -54,7 +62,7 @@ export default function MonitorPage() {
       try {
         const payload = JSON.parse(event.data)
         if (payload.type === "new_violation") {
-          setSessionViolations(prev => [payload.data, ...prev])
+          setSessionViolations(prev => [...prev, payload.data]) // Ascending order 1, 2, 3
           setSessionCount(prev => prev + 1)
         } else if (payload.type === "light_status") {
           setLightStatus(payload.data)
@@ -73,6 +81,7 @@ export default function MonitorPage() {
     setIsDropdownOpen(false)
     setSessionViolations([])
     setSessionCount(0)
+    resetZoom()
     
     if (cam.rtsp_url) {
       setIsProcessing(false)
@@ -84,7 +93,11 @@ export default function MonitorPage() {
         const startRes = await fetch("http://localhost:8000/start-detection", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...roiConfig, video_path: cam.rtsp_url })
+          body: JSON.stringify({ 
+            ...roiConfig, 
+            video_path: cam.rtsp_url,
+            camera_id: cam.id 
+          })
         })
 
         if (startRes.ok) {
@@ -92,6 +105,25 @@ export default function MonitorPage() {
         }
       } catch (e) { console.error(e) }
     }
+  }
+
+  const resetZoom = () => {
+    setZoom(1)
+    setPosition({ x: 0, y: 0 })
+  }
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (zoom <= 1) return
+    setIsDragging(true)
+    dragStart.current = { x: e.clientX - position.x, y: e.clientY - position.y }
+  }
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!isDragging || zoom <= 1) return
+    setPosition({
+      x: e.clientX - dragStart.current.x,
+      y: e.clientY - dragStart.current.y
+    })
   }
 
   const handleStop = async () => {
@@ -107,8 +139,8 @@ export default function MonitorPage() {
 
   return (
     <DashboardShell title="ລະບົບການກວດຈັບ">
-      <div className="flex flex-col gap-4 h-[calc(100vh-140px)] overflow-hidden">
-        
+      <div className="flex flex-col gap-6 w-full pb-10">
+
         {/* --- Header Control --- */}
         <div className="relative z-[1000] flex items-center justify-between bg-slate-900 border border-white/10 p-3 rounded-2xl shadow-xl shrink-0">
           <div className="flex items-center gap-4">
@@ -144,7 +176,7 @@ export default function MonitorPage() {
              </div>
              <div className="flex items-center gap-2 bg-emerald-500/10 px-3 py-1.5 rounded-full border border-emerald-500/20">
                 <div className="size-2 rounded-full bg-emerald-500 animate-pulse" />
-                <p className="text-xs font-black text-emerald-400 uppercase tracking-widest">ລະບົບກຳລັງເຮັດວຽກ</p>
+                <p className="text-xs font-black text-emerald-400 uppercase tracking-widest">ລະບົບອອນລາຍ</p>
              </div>
           </div>
           <div className="flex items-center gap-3">
@@ -159,14 +191,26 @@ export default function MonitorPage() {
           </div>
         </div>
 
-        {/* --- Large Video Feed --- */}
-        <div className="relative z-0 flex-1 bg-black rounded-[2.5rem] border-4 border-slate-900 shadow-2xl overflow-hidden flex items-center justify-center">
+        {/* --- Fixed Height Monitor Area (65% of Viewport) --- */}
+        <div 
+          className="relative z-0 h-[65vh] shrink-0 bg-black rounded-[2.5rem] border-4 border-slate-900 shadow-2xl overflow-hidden flex items-center justify-center group/vid select-none"
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={() => setIsDragging(false)}
+          onMouseLeave={() => setIsDragging(false)}
+          style={{ cursor: zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'default' }}
+        >
             {isProcessing ? (
-              <img 
-                src={`http://localhost:8000/video-feed?t=${selectedCamera?.id}`}
-                alt="AI Feed" 
-                className="w-full h-full object-contain bg-black"
-              />
+              <div className="w-full h-full overflow-hidden flex items-center justify-center pointer-events-none">
+                <img 
+                  src={`http://localhost:8000/video-feed?t=${selectedCamera?.id}`}
+                  alt="AI Feed" 
+                  className="w-full h-full object-contain bg-black transition-transform duration-75 ease-out"
+                  style={{ 
+                    transform: `translate(${position.x}px, ${position.y}px) scale(${zoom})`
+                  }}
+                />
+              </div>
             ) : (
               <div className="flex flex-col items-center gap-6">
                   <div className="relative">
@@ -176,60 +220,117 @@ export default function MonitorPage() {
                   <h3 className="text-lg font-black text-white uppercase tracking-[0.3em]">ກຳລັງເລີ່ມຕົ້ນລະບົບ AI...</h3>
               </div>
             )}
+
+            {/* Zoom Controls Overlay */}
+            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-slate-900/80 backdrop-blur-xl border border-white/10 p-2 px-4 rounded-2xl opacity-0 group-hover/vid:opacity-100 transition-all shadow-2xl scale-90 group-hover/vid:scale-100 z-10">
+               <button 
+                onClick={(e) => { e.stopPropagation(); setZoom(prev => Math.max(1, prev - 0.25)); if(zoom <= 1.25) setPosition({x:0,y:0}); }}
+                className="p-2 hover:bg-white/10 rounded-xl transition-all text-white pointer-events-auto"
+               >
+                  <ZoomOut className="size-5" />
+               </button>
+               <div className="h-4 w-px bg-white/10 mx-1" />
+               <span className="text-xs font-black text-white min-w-[40px] text-center">{Math.round(zoom * 100)}%</span>
+               <div className="h-4 w-px bg-white/10 mx-1" />
+               <button 
+                onClick={(e) => { e.stopPropagation(); setZoom(prev => Math.min(5, prev + 0.25)); }}
+                className="p-2 hover:bg-white/10 rounded-xl transition-all text-white pointer-events-auto"
+               >
+                  <ZoomIn className="size-5" />
+               </button>
+               <button 
+                onClick={(e) => { e.stopPropagation(); resetZoom(); }}
+                className="ml-2 px-3 py-1 bg-sky-500 text-white text-[10px] font-black rounded-lg hover:bg-sky-600 transition-all uppercase pointer-events-auto"
+               >
+                  Reset
+               </button>
+            </div>
             
-            <div className="absolute top-8 right-8 flex flex-col gap-4">
+            <div className="absolute top-6 right-6 flex flex-col gap-3 z-10">
                <div className={cn(
-                  "px-8 py-4 rounded-3xl border-2 backdrop-blur-xl shadow-2xl flex flex-col items-center min-w-[180px] transition-all duration-500",
+                  "px-6 py-3 rounded-2xl border-2 backdrop-blur-xl shadow-2xl flex flex-col items-center min-w-[150px] transition-all duration-500",
                   lightStatus === 'red' ? 'bg-rose-500/20 border-rose-500 text-rose-500' : 
                   lightStatus === 'green' ? 'bg-emerald-500/20 border-emerald-500 text-emerald-400' : 
                   'bg-slate-900/40 border-slate-500 text-slate-400'
                )}>
-                  <p className="text-[10px] font-black uppercase tracking-widest opacity-60 mb-1">ສະຖານະໄຟຈລາຈອນ</p>
-                  <h4 className="text-3xl font-black">{translateLightStatus(lightStatus)}</h4>
+                  <p className="text-[9px] font-black uppercase tracking-widest opacity-60 mb-0.5">ສະຖານະໄຟຈລາຈອນ</p>
+                  <h4 className="text-2xl font-black">{translateLightStatus(lightStatus)}</h4>
                </div>
-               
-               <div className="px-8 py-4 rounded-3xl border-2 border-white/10 bg-slate-900/40 backdrop-blur-xl shadow-2xl flex flex-col items-center min-w-[180px]">
-                  <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-1">ການລະເມີດທັງໝົດ</p>
-                  <h4 className="text-4xl font-black text-white">{sessionCount}</h4>
+
+               <div className="px-6 py-3 rounded-2xl border-2 border-white/10 bg-slate-900/40 backdrop-blur-xl shadow-2xl flex flex-col items-center min-w-[150px]">
+                  <p className="text-[9px] font-black uppercase tracking-widest text-slate-400 mb-0.5">ການລະເມີດທັງໝົດ</p>
+                  <h4 className="text-3xl font-black text-white">{sessionCount}</h4>
                </div>
             </div>
         </div>
 
-        {/* --- Bottom Table (Standardized) --- */}
-        <div className="h-[220px] flex flex-col shrink-0">
-          <div className="flex items-center justify-between px-4 mb-2">
+        {/* --- Natural Flow Table Section --- */}
+        <div className="flex flex-col mt-4">
+          <div className="flex items-center justify-between px-4 mb-4">
              <div className="flex items-center gap-3">
-                <ShieldAlert className="size-5 text-rose-500" />
-                <h4 className="font-black text-white uppercase tracking-wider text-sm">ລາຍການກວດຈັບຫຼ້າສຸດ</h4>
+                <ShieldAlert className="size-6 text-rose-500" />
+                <h4 className="font-black text-white uppercase tracking-tighter text-xl">ລາຍການກວດຈັບຫຼ້າສຸດ</h4>
              </div>
-             <div className="px-4 py-1 bg-sky-500/20 text-sky-400 border border-sky-500/30 rounded-full font-black text-[10px] tracking-widest uppercase">ຂໍ້ມູນ Real Time</div>
+             <div className="px-5 py-1.5 bg-sky-500/10 text-sky-400 border border-sky-500/20 rounded-full font-black text-xs tracking-widest uppercase">ຂໍ້ມູນຫຼ້າສຸດ</div>
           </div>
 
           <DataTable 
-            headers={["ລຳດັບ", "Vehicle ID", "ປະເພດພາຫະນະ", "ເວລາ", "ຈັດການ"]}
-            columnCount={5}
+            headers={["ລຳດັບ", "Vehicle ID", "ປະເພດພາຫະນະ", "ເວລາ", "ຮູບພາບຫຼັກຖານ", "ວິດີໂອຫຼັກຖານ", "ຈັດການ"]}
+            columnCount={7}
             emptyMessage="ກຳລັງລໍຖ້າການລະເມີດ..."
           >
             {sessionViolations.map((v, i) => (
               <DataTableRow key={v.id}>
-                <DataTableCell className="font-bold text-slate-500">#{sessionViolations.length - i}</DataTableCell>
-                <DataTableCell className="font-mono font-black text-white tracking-tighter uppercase">VkH-{v.vehicle_id}</DataTableCell>
+                <DataTableCell className="font-bold text-slate-500 text-lg">#{i + 1}</DataTableCell>
+                <DataTableCell className="font-mono font-black text-white tracking-tighter uppercase text-base">VkH-{v.vehicle_id}</DataTableCell>
                 <DataTableCell>
                    <span className="px-3 py-1 rounded-lg bg-sky-500/10 text-sky-400 font-black text-[10px] uppercase border border-sky-500/20">
                       {translateVehicleType(v.vehicle_type)}
                    </span>
                 </DataTableCell>
-                <DataTableCell className="text-slate-400 font-medium text-xs">
+                <DataTableCell className="text-slate-300 font-bold text-sm">
                   {new Date(v.time_stamp).toLocaleTimeString('lo-LA')}
+                </DataTableCell>
+                <DataTableCell align="center">
+                  <div 
+                    className="relative group cursor-pointer overflow-hidden rounded-xl border border-white/10 w-28 h-16 shadow-lg mx-auto" 
+                    onClick={() => setSelectedImage(`http://localhost:8000/${v.image_path}`)}
+                  >
+                    <img 
+                      src={`http://localhost:8000/${v.image_path}`} 
+                      alt="Violation Evidence" 
+                      className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
+                    />
+                    <div className="absolute inset-0 bg-sky-500/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                      <Maximize2 className="size-4 text-white drop-shadow-md" />
+                    </div>
+                  </div>
+                </DataTableCell>
+                <DataTableCell align="center">
+                  <div 
+                    className="relative group cursor-pointer overflow-hidden rounded-xl border border-white/10 w-28 h-16 shadow-lg mx-auto transition-all active:scale-95" 
+                    onClick={() => setSelectedVideo(`http://localhost:8000/${v.video_path}`)}
+                  >
+                    <img 
+                      src={`http://localhost:8000/${v.image_path}`} 
+                      alt="Video Cover" 
+                      className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500 opacity-60"
+                    />
+                    <div className="absolute inset-0 bg-black/20 group-hover:bg-black/10 transition-colors flex items-center justify-center">
+                       <div className="p-1.5 bg-white/20 backdrop-blur-sm rounded-full border border-white/30 group-hover:scale-110 transition-transform shadow-xl">
+                          <Play className="size-4 text-white fill-current" />
+                       </div>
+                    </div>
+                  </div>
                 </DataTableCell>
                 <DataTableCell align="center">
                    <div className="flex items-center justify-center gap-2">
                       <button 
                         onClick={() => { setSelectedViolation(v); setIsPrintModalOpen(true); }}
-                        className="p-2 bg-slate-800 hover:bg-sky-500 text-sky-400 hover:text-white rounded-lg transition-all"
+                        className="p-3 bg-slate-800 hover:bg-sky-500 text-sky-400 hover:text-white rounded-xl transition-all shadow-lg border border-white/5"
                         title="ພິມລາຍງານ"
                       >
-                         <Printer className="size-4" />
+                         <Printer className="size-5" />
                       </button>
                    </div>
                 </DataTableCell>
@@ -239,10 +340,68 @@ export default function MonitorPage() {
         </div>
       </div>
 
+
       <PrintPreviewModal 
         violation={selectedViolation} 
         onClose={() => { setIsPrintModalOpen(false); setSelectedViolation(null); }} 
       />
+
+      {/* Evidence Image Modal */}
+      {selectedImage && (
+        <div 
+          className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/95 p-6 backdrop-blur-2xl animate-in fade-in duration-300"
+          onClick={() => setSelectedImage(null)}
+        >
+          <div className="relative max-w-5xl w-full bg-slate-900 rounded-[3rem] overflow-hidden shadow-2xl border border-white/10" onClick={e => e.stopPropagation()}>
+            <div className="p-8 border-b border-white/5 flex justify-between items-center bg-slate-900/50 text-white">
+              <div className="flex items-center gap-4 text-sky-400">
+                 <div className="p-3 bg-sky-500/10 rounded-2xl"><Eye className="size-6" /></div>
+                 <h3 className="font-black text-2xl uppercase tracking-tighter text-white">Full Evidence View</h3>
+              </div>
+              <button 
+                onClick={() => setSelectedImage(null)}
+                className="p-3 bg-white/5 hover:bg-rose-500/20 rounded-full transition-all text-white/50 hover:text-rose-500"
+              >
+                <X className="size-6" />
+              </button>
+            </div>
+            <div className="bg-black p-4">
+              <img src={selectedImage} alt="Violation Evidence" className="w-full h-auto max-h-[70vh] object-contain rounded-2xl shadow-2xl" />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Video Playback Modal */}
+      {selectedVideo && (
+        <div 
+          className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/98 p-6 backdrop-blur-3xl animate-in fade-in duration-300"
+          onClick={() => setSelectedVideo(null)}
+        >
+          <div className="relative max-w-5xl w-full bg-slate-900 rounded-[3rem] overflow-hidden shadow-2xl border border-white/10" onClick={e => e.stopPropagation()}>
+            <div className="p-8 border-b border-white/5 flex justify-between items-center bg-slate-900/50 text-white">
+              <div className="flex items-center gap-4 text-emerald-400">
+                 <div className="p-3 bg-emerald-500/10 rounded-2xl"><Play className="size-6 fill-current" /></div>
+                 <h3 className="font-black text-2xl uppercase tracking-tighter text-white">Evidence Video Playback</h3>
+              </div>
+              <button 
+                onClick={() => setSelectedVideo(null)}
+                className="p-3 bg-white/5 hover:bg-rose-500/20 rounded-full transition-all text-white/50 hover:text-rose-500"
+              >
+                <X className="size-6" />
+              </button>
+            </div>
+            <div className="bg-black p-4 aspect-video flex items-center justify-center">
+               <video 
+                  src={selectedVideo} 
+                  controls 
+                  autoPlay 
+                  className="w-full h-full max-h-[70vh] rounded-2xl shadow-2xl"
+               />
+            </div>
+          </div>
+        </div>
+      )}
 
       <ConfirmModal 
         isOpen={activeModal === "stop"} 

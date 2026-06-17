@@ -27,10 +27,9 @@ export default function CamerasPage() {
   const [editingCamera, setEditingCamera] = useState<CCTV | null>(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
   
-  // Toast Notification State
+  // Feedback States
   const [toast, setToast] = useState<{ message: string, type: ToastType } | null>(null)
-
-  // Video Removal State
+  const [deleteCamId, setDeleteCamId] = useState<number | null>(null)
   const [deleteVideoId, setDeleteVideoId] = useState<number | null>(null)
 
   // Video Upload & Preview State
@@ -73,19 +72,18 @@ export default function CamerasPage() {
     } catch (error) { showToast("ເກີດຂໍ້ຜິດພາດໃນການອັບເດດ", "error") }
   }
 
-  const handleDelete = async (id: number) => {
-    if (!confirm("ທ່ານຕ້ອງການລຶບກ້ອງວົງຈອນປິດນີ້ແທ້ຫຼືບໍ່?")) return
+  const confirmDeleteCamera = async () => {
+    if (deleteCamId === null) return
     try {
-      const response = await fetch(`http://localhost:8000/cameras/${id}`, { method: "DELETE" })
+      const response = await fetch(`http://localhost:8000/cameras/${deleteCamId}`, { method: "DELETE" })
       if (response.ok) {
         fetchCameras()
         showToast("ລຶບຂໍ້ມູນກ້ອງສຳເລັດແລ້ວ", "success")
+      } else {
+        showToast("ເກີດຂໍ้ຜິດພາດໃນການລຶບ", "error")
       }
-    } catch (error) { showToast("ເກີດຂໍ້ຜິດພາດໃນການລຶບ", "error") }
-  }
-
-  const handleRemoveVideoClick = (id: number) => {
-    setDeleteVideoId(id)
+    } catch (error) { showToast("ບໍ່ສາມາດເຊື່ອມຕໍ່ກັບເຊີເວີ", "error") }
+    finally { setDeleteCamId(null) }
   }
 
   const confirmRemoveVideo = async () => {
@@ -95,8 +93,10 @@ export default function CamerasPage() {
       if (response.ok) {
         showToast("ລຶບວິດີໂອສຳເລັດແລ້ວ", "success")
         fetchCameras()
+      } else {
+        showToast("ເກີດຂໍ้ຜິດພາດໃນການລຶບວິດີໂອ", "error")
       }
-    } catch (error) { showToast("ເກີດຂໍ้ຜິດພາດໃນການລຶບວິດີໂອ", "error") }
+    } catch (error) { showToast("ບໍ່ສາມາດເຊື່ອມຕໍ່ກັບເຊີເວີ", "error") }
     finally { setDeleteVideoId(null) }
   }
 
@@ -113,7 +113,7 @@ export default function CamerasPage() {
         setIsModalOpen(false)
         showToast("ແກ້ໄຂຂໍ້ມູນສະຖານທີ່ສຳເລັດ", "success")
       }
-    } catch (error) { showToast("ເກີດຂໍ้ຜິດພາດໃນການບັນທຶກ", "error") }
+    } catch (error) { showToast("ເກີດຂໍ້ຜິດພາດในການບັນທຶກ", "error") }
   }
 
   const handleUploadClick = (id: number) => {
@@ -142,7 +142,7 @@ export default function CamerasPage() {
         setPreviewUrl(data.url)
         setIsPreviewOpen(true)
       } else {
-        showToast("ເກີດຂໍ้ຜິດພາດໃນການອັບໂຫຼດ", "error")
+        showToast("ເກີດຂໍ້ຜິດພາດໃນການອັບໂຫຼດ", "error")
         setUploadingId(null)
       }
     } catch (error: any) {
@@ -191,6 +191,16 @@ export default function CamerasPage() {
       {/* Global Upload Loading Modal */}
       <UploadLoadingModal isOpen={isUploading} onCancel={handleCancelUpload} />
 
+      {/* Camera Deletion Confirmation Modal */}
+      <ConfirmModal 
+        isOpen={deleteCamId !== null}
+        onClose={() => setDeleteCamId(null)}
+        onConfirm={confirmDeleteCamera}
+        title="ຢືນຢັນການລຶບກ້ອງ"
+        description="ທ່ານຕ້ອງການລຶບກ້ອງວົງຈອນປິດນີ້ແທ້ຫຼືບໍ່?"
+        subDescription="ການກະທຳນີ້ຈະລຶບຂໍ້ມູນກ້ອງອອກຈາກລະບົບຖາວອນ."
+      />
+
       {/* Video Deletion Confirmation Modal */}
       <ConfirmModal 
         isOpen={deleteVideoId !== null}
@@ -223,9 +233,9 @@ export default function CamerasPage() {
         {cameras.map((cam, index) => (
           <DataTableRow key={cam.id}>
             <DataTableCell className="font-black text-sky-500 text-lg">#{index + 1}</DataTableCell>
-            <DataTableCell className="font-black text-slate-700 tracking-tighter uppercase">CCTV-{cam.camera_id}</DataTableCell>
-            <DataTableCell>
-              <div className="flex flex-col gap-1">
+            <DataTableCell align="left" className="font-black text-slate-700 tracking-tighter uppercase">CCTV-{cam.camera_id}</DataTableCell>
+            <DataTableCell align="left">
+              <div className="flex flex-col gap-1 text-left">
                 <span className="font-black text-sm text-foreground uppercase tracking-tight">{cam.location_name}</span>
                 <span className="text-[10px] text-muted-foreground font-bold flex items-center gap-1.5 uppercase opacity-70">
                   <MapPin className="size-3 text-rose-500" /> {cam.village}, {cam.district}, {cam.province}
@@ -233,7 +243,7 @@ export default function CamerasPage() {
               </div>
             </DataTableCell>
             <DataTableCell>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center justify-center gap-2">
                 <button 
                   onClick={() => setPlayingVideo(`http://localhost:8000/${cam.rtsp_url}`)}
                   disabled={!cam.rtsp_url} 
@@ -243,7 +253,7 @@ export default function CamerasPage() {
                 </button>
                 {cam.rtsp_url && (
                   <button 
-                    onClick={() => handleRemoveVideoClick(cam.id)}
+                    onClick={() => setDeleteVideoId(cam.id)}
                     className="p-2 bg-rose-500/10 hover:bg-rose-500 text-rose-500 hover:text-white rounded-lg transition-all border border-rose-500/20"
                     title="ລຶບວິດີໂອ"
                   >
@@ -268,7 +278,7 @@ export default function CamerasPage() {
                 <button onClick={() => { setEditingCamera({...cam}); setIsModalOpen(true); }} className="p-3 rounded-xl bg-slate-900 text-sky-400 border border-white/5 shadow-lg hover:bg-slate-800 transition-all transform active:scale-90" title="ແກ້ໄຂຂໍ້ມູນ">
                   <Edit2 className="size-4" />
                 </button>
-                <button onClick={() => handleDelete(cam.id)} className="p-3 rounded-xl bg-slate-900 text-rose-500 border border-white/5 shadow-lg hover:bg-slate-800 transition-all transform active:scale-90" title="ລຶບຂໍ້ມູນ">
+                <button onClick={() => setDeleteCamId(cam.id)} className="p-3 rounded-xl bg-slate-900 text-rose-500 border border-white/5 shadow-lg hover:bg-slate-800 transition-all transform active:scale-90" title="ລຶບຂໍ້ມູນ">
                   <Trash2 className="size-4" />
                 </button>
               </div>

@@ -7,10 +7,10 @@ import { cn } from "@/lib/utils"
 
 const navItems = [
   { href: "/", label: "ໜ້າຫຼັກ", icon: Home },
-  { href: "/monitor", label: "ຕິດຕາມສົດ", icon: Activity },
+  { href: "/monitor", label: "ກວດຈັບ", icon: Activity },
   { href: "/cameras", label: "ຈັດການກ້ອງ", icon: Camera },
   { href: "/data", label: "ປະຫວັດການລະເມີດ", icon: Layers },
-  { href: "/upload-roi", label: "ຕັ້ງຄ່າພື້ນທີ່ (ROI)", icon: Target },
+  { href: "/upload-roi", label: "ຕັ້ງຄ່າພື້ນທີ່ກວດຈັບ", icon: Target },
   { href: "/settings", label: "ຕັ້ງຄ່າລະບົບ", icon: Settings },
 ]
 
@@ -30,18 +30,32 @@ export function Sidebar({ isCollapsed, setIsCollapsed }: SidebarProps) {
       )} 
       suppressHydrationWarning
     >
-      {/* Toggle Button */}
+      {/* Toggle Button - Moved lower to avoid overlap with logo */}
       <button
         onClick={() => setIsCollapsed(!isCollapsed)}
-        className="absolute -right-3 top-10 z-50 flex size-6 items-center justify-center rounded-full bg-sky-500 text-white shadow-lg hover:bg-sky-600 transition-transform active:scale-95"
+        className="absolute -right-3 top-24 z-50 flex size-6 items-center justify-center rounded-full bg-sky-500 text-white shadow-lg hover:bg-sky-600 transition-transform active:scale-95 border-2 border-panel"
       >
         <ChevronLeft className={cn("size-4 transition-transform duration-500", isCollapsed && "rotate-180")} />
       </button>
 
       {/* Logo Section */}
-      <div className={cn("flex items-center gap-3 px-6 pt-8 pb-12 overflow-hidden whitespace-nowrap")} suppressHydrationWarning>
-        <Car className="size-8 shrink-0 text-panel-foreground" aria-hidden="true" />
-        {!isCollapsed && <span className="text-lg font-black tracking-tighter">AI Monitoring</span>}
+      <div className={cn(
+        "flex items-center gap-3 pt-10 pb-12 overflow-hidden",
+        isCollapsed ? "justify-center px-0" : "px-6"
+      )} suppressHydrationWarning>
+        <div className="p-2 bg-sky-500/10 rounded-2xl shrink-0 flex items-center justify-center shadow-lg shadow-sky-500/5">
+          <Car className={cn("text-sky-400", isCollapsed ? "size-7" : "size-8")} aria-hidden="true" />
+        </div>
+        {!isCollapsed && (
+          <div className="flex flex-col">
+            <span className="text-2xl font-black tracking-tighter leading-none text-white">
+              ລະບົບກວດຈັບ
+            </span>
+            <span className="text-lg font-black tracking-tighter leading-none text-sky-400 mt-1">
+              ລົດລວງໄຟແດງ
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Navigation */}
