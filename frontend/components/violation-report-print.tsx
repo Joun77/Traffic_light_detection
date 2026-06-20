@@ -55,134 +55,127 @@ export const ViolationReportPrint = React.forwardRef<HTMLDivElement, ViolationRe
       <div ref={ref} className="print-container">
         <style dangerouslySetInnerHTML={{ __html: `
           @media print {
-            @page { size: A4; margin: 0; }
-            body { margin: 0; padding: 0; -webkit-print-color-adjust: exact; background: #fff; }
+            @page { size: A4 portrait; margin: 0; }
+            body { margin: 0; padding: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; background: #fff; }
             .no-print { display: none !important; }
-            .print-document { box-shadow: none; border: none; padding: 0; width: 100%; height: 297mm; overflow: hidden; page-break-after: avoid; }
+            .print-document {
+              box-shadow: none !important; border: none !important;
+              width: 210mm !important; height: 297mm !important;
+              padding: 10mm 15mm !important;
+              overflow: hidden !important;
+              page-break-after: avoid !important;
+            }
           }
-          
+
           .print-document {
             background: #fff;
             width: 210mm;
             height: 297mm;
-            padding: 15mm 20mm;
+            padding: 10mm 15mm;
             margin: auto;
             font-family: 'Phetsarath OT', 'Noto Sans Lao', sans-serif;
             color: #1a1a1a;
-            line-height: 1.4;
+            line-height: 1.3;
             box-sizing: border-box;
             display: flex;
             flex-direction: column;
+            overflow: hidden;
           }
 
+          /* ── Header ── */
           .print-header {
             text-align: center;
             border-bottom: 2px solid #1a1a1a;
-            padding-bottom: 10px;
-            margin-bottom: 15px;
+            padding-bottom: 6px;
+            margin-bottom: 6px;
           }
-          .print-country { font-size: 16px; font-weight: bold; margin-bottom: 2px; }
-          .print-motto { font-size: 16px; font-weight: bold; margin-bottom: 2px; }
-          .print-dept { font-size: 14px; font-weight: bold; color: #1e3a5f; }
+          .print-country { font-size: 13px; font-weight: bold; margin: 0; }
+          .print-motto   { font-size: 13px; font-weight: bold; margin: 0; }
+          .print-dept    { font-size: 12px; font-weight: bold; color: #1e3a5f; margin: 0; }
 
-          .print-title-block { text-align: center; margin: 10px 0; }
-          .print-title-block h1 { font-size: 26px; font-weight: 900; color: #b91c1c; margin: 0; }
-          .print-title-block h2 { font-size: 16px; color: #444; margin-top: 2px; font-weight: bold; }
+          /* ── Title ── */
+          .print-title-block { text-align: center; margin: 5px 0; }
+          .print-title-block h1 { font-size: 22px; font-weight: 900; color: #b91c1c; margin: 0; }
+          .print-title-block h2 { font-size: 13px; color: #444; margin: 1px 0 0; font-weight: bold; }
 
+          /* ── Meta row ── */
           .print-meta-row {
-            display: flex;
-            justify-content: space-between;
-            border: 1px solid #ccc;
-            margin: 10px 0;
-            background: #f9f9f9;
+            display: flex; justify-content: space-between;
+            border: 1px solid #ccc; margin: 5px 0; background: #f9f9f9;
           }
-          .print-meta-cell { padding: 8px 15px; font-size: 13px; flex: 1; }
+          .print-meta-cell { padding: 5px 12px; font-size: 12px; flex: 1; }
           .print-meta-cell:first-child { border-right: 1px solid #ccc; }
-          .print-meta-cell span { font-weight: bold; margin-left: 5px; color: #b91c1c; }
+          .print-meta-cell span { font-weight: bold; margin-left: 4px; color: #b91c1c; }
 
+          /* ── Section headings ── */
           .print-section-heading {
-            font-size: 14px;
-            font-weight: bold;
-            color: #fff;
-            background: #1e3a5f;
-            padding: 6px 15px;
-            margin: 15px 0 10px;
-            border-radius: 4px;
+            font-size: 12px; font-weight: bold; color: #fff;
+            background: #1e3a5f; padding: 4px 12px;
+            margin: 7px 0 5px; border-radius: 4px;
           }
 
+          /* ── Details grid ── */
           .print-details-grid {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 8px 30px;
-            margin-bottom: 15px;
-            padding: 0 10px;
+            display: grid; grid-template-columns: repeat(2, 1fr);
+            gap: 4px 20px; margin-bottom: 4px; padding: 0 8px;
           }
-          .print-detail-item { font-size: 13px; }
-          .print-detail-label { font-weight: bold; color: #555; width: 100px; display: inline-block; }
+          .print-detail-item { font-size: 12px; }
+          .print-detail-label { font-weight: bold; color: #555; width: 90px; display: inline-block; }
           .print-detail-value { font-weight: bold; color: #000; }
 
-          .print-evidence-box {
-            border: 2px solid #1e3a5f;
-            border-radius: 10px;
-            padding: 10px;
-            background: #fff;
-            margin: 10px 0;
-            max-height: 105mm;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            overflow: hidden;
+          /* ── Evidence section ── */
+          .print-ev-section { margin: 4px 0; }
+          .print-ev-label {
+            font-size: 9px; font-weight: bold; color: #1e3a5f;
+            margin-bottom: 2px; letter-spacing: 0.05em; text-transform: uppercase;
           }
-          .print-evidence-image {
-            max-width: 100%;
-            max-height: 100mm;
-            width: auto;
-            height: auto;
-            border-radius: 5px;
-            object-fit: contain;
+          .print-ev-main {
+            border: 2px solid #1e3a5f; border-radius: 6px;
+            padding: 4px; background: #fff; margin-bottom: 5px;
+            height: 50mm; display: flex; align-items: center;
+            justify-content: center; overflow: hidden;
           }
+          .print-ev-main img {
+            max-width: 100%; max-height: 46mm; object-fit: contain; border-radius: 3px;
+          }
+          .print-ev-row { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+          .print-ev-small {
+            border: 1.5px solid #cbd5e1; border-radius: 6px;
+            padding: 4px; background: #f8fafc;
+            height: 30mm; display: flex; flex-direction: column; gap: 2px; overflow: hidden;
+          }
+          .print-ev-small-inner {
+            flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden;
+          }
+          .print-ev-small-inner img { max-width: 100%; max-height: 100%; object-fit: contain; }
+          .print-ev-placeholder { color: #94a3b8; font-size: 9px; font-style: italic; text-align: center; }
 
+          /* ── Warning box ── */
           .print-warning-box {
-            border: 1.5px solid #f59e0b;
-            background: #fffbeb;
-            border-radius: 8px;
-            padding: 12px;
-            margin: 10px 0;
-            font-size: 11px;
+            border: 1.5px solid #f59e0b; background: #fffbeb;
+            border-radius: 6px; padding: 7px 10px; margin: 6px 0; font-size: 10px;
           }
-          .print-warn-title { font-weight: bold; color: #b45309; font-size: 13px; margin-bottom: 5px; }
-          .print-warning-box ul { padding-left: 15px; margin: 0; }
+          .print-warn-title { font-weight: bold; color: #b45309; font-size: 11px; margin-bottom: 3px; }
+          .print-warning-box ul { padding-left: 14px; margin: 0; }
+          .print-warning-box li { margin-bottom: 1px; }
 
+          /* ── Footer ── */
           .print-footer {
-            display: flex;
-            justify-content: space-between;
-            margin-top: auto;
-            padding-top: 15px;
-            border-top: 1px solid #eee;
+            display: flex; justify-content: space-between;
+            margin-top: auto; padding-top: 8px; border-top: 1px solid #eee;
           }
-          .print-sig-block { text-align: center; flex: 1; font-size: 12px; }
-          .print-stamp-block { text-align: center; flex: 1; font-size: 12px; }
+          .print-sig-block   { text-align: center; flex: 1; font-size: 11px; }
+          .print-stamp-block { text-align: center; flex: 1; font-size: 11px; }
           .print-stamp-circle {
-            width: 80px;
-            height: 80px;
-            border: 2px dashed #1e3a5f;
-            border-radius: 50%;
-            margin: 8px auto;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 10px;
-            color: #1e3a5f;
-            font-weight: bold;
+            width: 60px; height: 60px; border: 2px dashed #1e3a5f;
+            border-radius: 50%; margin: 5px auto;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 9px; color: #1e3a5f; font-weight: bold;
           }
-          
+
           .print-sys-footer {
-            text-align: center;
-            font-size: 10px;
-            color: #aaa;
-            margin-top: 10px;
-            padding-top: 5px;
-            border-top: 1px solid #eee;
+            text-align: center; font-size: 9px; color: #aaa;
+            margin-top: 6px; padding-top: 4px; border-top: 1px solid #eee;
           }
         ` }} />
 
@@ -240,12 +233,41 @@ export const ViolationReportPrint = React.forwardRef<HTMLDivElement, ViolationRe
           </div>
 
           <div className="print-section-heading">ຫຼັກຖານການກະທຳຜິດ (Evidence Proof)</div>
-          <div className="print-evidence-box">
-            <img 
-              src={`http://localhost:8000/${violation.image_path}`} 
-              alt="Evidence" 
-              className="print-evidence-image"
-            />
+          <div className="print-ev-section">
+
+            {/* ① ຮູບຫຼັກຖານລວມ */}
+            <div className="print-ev-label">① ຮູບຫຼັກຖານລວມ — ພາຫະນະ ແລະ ໄຟສັນຍານ</div>
+            <div className="print-ev-main">
+              <img
+                src={`http://localhost:8000/${violation.context_image_path || violation.image_path}`}
+                alt="Full Evidence"
+              />
+            </div>
+
+            {/* ② ຮູບລົດ  +  ③ ຮູບປ້າຍທະບຽນ */}
+            <div className="print-ev-row">
+              <div className="print-ev-small">
+                <div className="print-ev-label">② ຮູບພາຫະນະທີ່ກະທຳຜິດ</div>
+                <div className="print-ev-small-inner">
+                  {violation.crop_image_path ? (
+                    <img src={`http://localhost:8000/${violation.crop_image_path}`} alt="Vehicle" />
+                  ) : (
+                    <div className="print-ev-placeholder">ບໍ່ມີຮູບພາຫະນະ</div>
+                  )}
+                </div>
+              </div>
+              <div className="print-ev-small">
+                <div className="print-ev-label">③ ຮູບປ້າຍທະບຽນ</div>
+                <div className="print-ev-small-inner">
+                  {violation.plate_image_path ? (
+                    <img src={`http://localhost:8000/${violation.plate_image_path}`} alt="Plate" />
+                  ) : (
+                    <div className="print-ev-placeholder">ບໍ່ມີຮູບປ້າຍທະບຽນ</div>
+                  )}
+                </div>
+              </div>
+            </div>
+
           </div>
 
           <div className="print-warning-box">

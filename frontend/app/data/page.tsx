@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { DashboardShell } from "@/components/dashboard-shell"
-import { Search, FileSpreadsheet, Eye, Calendar, Clock, Car, Trash2, Printer, X, Maximize2, Play } from "lucide-react"
+import { Search, FileSpreadsheet, Eye, Calendar, Clock, Trash2, Printer, X, Maximize2, Play, ScanLine, FileImage } from "lucide-react"
 import { getLaoISODate } from "@/lib/time"
 import { PrintPreviewModal, Violation } from "@/components/print-preview-modal"
 import { DataTable, DataTableRow, DataTableCell } from "@/components/ui/data-table"
@@ -16,6 +16,7 @@ export default function DataPage() {
   const [violations, setViolations] = useState<Violation[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedImage, setSelectedImage] = useState<string | null>(null)
+  const [selectedImageLabel, setSelectedImageLabel] = useState<string>("")
   const [selectedVideo, setSelectedVideo] = useState<string | null>(null)
   const [previewViolation, setPreviewViolation] = useState<Violation | null>(null)
   const [limit, setLimit] = useState(50)
@@ -177,81 +178,107 @@ export default function DataPage() {
         </select>
       </div>
 
-      <DataTable 
-        headers={["ລຳດັບ", "ໄອດີລົດ", "ປະເພດພາຫະນະ", "ວັນທີ ແລະ ເວລາ", "ສະຖານະໄຟ", "ຮູບພາບຫຼັກຖານ", "ວິດີໂອຫຼັກຖານ", "ຈັດການ"]}
+      <DataTable
+        headers={["ລຳດັບ", "ໄອດີລົດ", "ປະເພດ", "ວັນທີ ແລະ ເວລາ", "ສະຖານະໄຟ", "ຮູບຫຼັກຖານ", "ຮູບລົດ", "ປ້າຍທະບຽນ", "ວິດີໂອ", "ຈັດການ"]}
         loading={loading}
-        columnCount={8}
+        columnCount={10}
       >
-        {violations.map((v, index) => (
-          <DataTableRow key={v.id}>
-            <DataTableCell className="font-bold text-slate-500">#{index + 1}</DataTableCell>
-            <DataTableCell className="font-mono font-black text-white tracking-tighter uppercase text-base">VkH-{v.vehicle_id}</DataTableCell>
-            <DataTableCell>
+        {violations.map((v, index) => {
+          const openImg = (path: string | undefined, label: string) => {
+            if (!path) return
+            setSelectedImage(`http://localhost:8000/${path}`)
+            setSelectedImageLabel(label)
+          }
+          const contextSrc = v.context_image_path || v.image_path
+          return (
+            <DataTableRow key={v.id}>
+              <DataTableCell className="font-bold text-slate-500">#{index + 1}</DataTableCell>
+              <DataTableCell className="font-mono font-black text-white tracking-tighter uppercase text-base">VkH-{v.vehicle_id}</DataTableCell>
+              <DataTableCell>
                 <span className="px-3 py-1 rounded-lg bg-sky-500/10 text-sky-400 font-black text-[10px] uppercase border border-sky-500/20">
                   {translateVehicleType(v.vehicle_type)}
                 </span>
-            </DataTableCell>
-            <DataTableCell>
-              <div className="flex flex-col gap-0.5">
-                <span className="flex items-center justify-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase opacity-70"><Calendar className="size-3 text-sky-500" /> {new Date(v.time_stamp).toLocaleDateString('lo-LA')}</span>
-                <span className="flex items-center justify-center gap-1.5 text-xs font-black text-white"><Clock className="size-3 text-sky-500" /> {new Date(v.time_stamp).toLocaleTimeString('lo-LA')}</span>
-              </div>
-            </DataTableCell>
-            <DataTableCell>
-              <span className={cn("inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full font-black text-[10px] border uppercase shadow-sm", getLightStatusColor(v.light_status))}>
-                <div className={cn("size-1.5 rounded-full animate-pulse", v.light_status.toLowerCase() === 'red' ? 'bg-rose-500' : v.light_status.toLowerCase() === 'green' ? 'bg-emerald-500' : 'bg-slate-400')} />
-                {translateLightStatus(v.light_status)}
-              </span>
-            </DataTableCell>
-            <DataTableCell align="center">
-              <div className="relative group cursor-pointer overflow-hidden rounded-xl border border-white/10 w-28 h-16 shadow-lg mx-auto" onClick={() => setSelectedImage(`http://localhost:8000/${v.image_path}`)}>
-                <img 
-                  src={`http://localhost:8000/${v.image_path}`} 
-                  alt="Violation Evidence" 
-                  className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
-                />
-                <div className="absolute inset-0 bg-sky-500/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                  <Maximize2 className="size-4 text-white drop-shadow-md" />
+              </DataTableCell>
+              <DataTableCell>
+                <div className="flex flex-col gap-0.5">
+                  <span className="flex items-center justify-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase opacity-70"><Calendar className="size-3 text-sky-500" /> {new Date(v.time_stamp).toLocaleDateString('lo-LA')}</span>
+                  <span className="flex items-center justify-center gap-1.5 text-xs font-black text-white"><Clock className="size-3 text-sky-500" /> {new Date(v.time_stamp).toLocaleTimeString('lo-LA')}</span>
                 </div>
-              </div>
-            </DataTableCell>
-            <DataTableCell align="center">
-              <div 
-                className="relative group cursor-pointer overflow-hidden rounded-xl border border-white/10 w-28 h-16 shadow-lg mx-auto transition-all active:scale-95" 
-                onClick={() => setSelectedVideo(`http://localhost:8000/${v.video_path}`)}
-              >
-                <img 
-                  src={`http://localhost:8000/${v.image_path}`} 
-                  alt="Video Cover" 
-                  className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500 opacity-60"
-                />
-                <div className="absolute inset-0 bg-black/20 group-hover:bg-black/10 transition-colors flex items-center justify-center">
+              </DataTableCell>
+              <DataTableCell>
+                <span className={cn("inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full font-black text-[10px] border uppercase shadow-sm", getLightStatusColor(v.light_status))}>
+                  <div className={cn("size-1.5 rounded-full animate-pulse", v.light_status.toLowerCase() === 'red' ? 'bg-rose-500' : v.light_status.toLowerCase() === 'green' ? 'bg-emerald-500' : 'bg-slate-400')} />
+                  {translateLightStatus(v.light_status)}
+                </span>
+              </DataTableCell>
+
+              {/* ຮູບຫຼັກຖານ */}
+              <DataTableCell align="center">
+                <div className="relative group cursor-pointer overflow-hidden rounded-xl border border-white/10 w-28 h-16 shadow-lg mx-auto" onClick={() => openImg(contextSrc, "ຮູບຫຼັກຖານ")}>
+                  <img src={`http://localhost:8000/${contextSrc}`} alt="Evidence" className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
+                  <div className="absolute inset-0 bg-sky-500/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                    <Maximize2 className="size-4 text-white drop-shadow-md" />
+                  </div>
+                </div>
+              </DataTableCell>
+
+              {/* ຮູບລົດ */}
+              <DataTableCell align="center">
+                {v.crop_image_path ? (
+                  <div className="relative group cursor-pointer overflow-hidden rounded-xl border border-white/10 w-28 h-16 shadow-lg mx-auto" onClick={() => openImg(v.crop_image_path, "ຮູບລົດ")}>
+                    <img src={`http://localhost:8000/${v.crop_image_path}`} alt="Vehicle Crop" className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
+                    <div className="absolute inset-0 bg-amber-500/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                      <Maximize2 className="size-4 text-white drop-shadow-md" />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="w-28 h-16 mx-auto rounded-xl border border-white/5 bg-slate-800/50 flex items-center justify-center">
+                    <FileImage className="size-5 text-slate-600" />
+                  </div>
+                )}
+              </DataTableCell>
+
+              {/* ປ້າຍທະບຽນ */}
+              <DataTableCell align="center">
+                {v.plate_image_path ? (
+                  <div className="relative group cursor-pointer overflow-hidden rounded-xl border border-white/10 w-28 h-16 shadow-lg mx-auto" onClick={() => openImg(v.plate_image_path, "ປ້າຍທະບຽນ")}>
+                    <img src={`http://localhost:8000/${v.plate_image_path}`} alt="Plate" className="w-full h-full object-contain bg-black group-hover:scale-110 transition-transform duration-500" />
+                    <div className="absolute inset-0 bg-emerald-500/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                      <ScanLine className="size-4 text-white drop-shadow-md" />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="w-28 h-16 mx-auto rounded-xl border border-white/5 bg-slate-800/50 flex items-center justify-center">
+                    <ScanLine className="size-5 text-slate-600" />
+                  </div>
+                )}
+              </DataTableCell>
+
+              {/* ວິດີໂອ */}
+              <DataTableCell align="center">
+                <div className="relative group cursor-pointer overflow-hidden rounded-xl border border-white/10 w-28 h-16 shadow-lg mx-auto transition-all active:scale-95" onClick={() => setSelectedVideo(`http://localhost:8000/${v.video_path}`)}>
+                  <img src={`http://localhost:8000/${contextSrc}`} alt="Video Cover" className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500 opacity-60" />
+                  <div className="absolute inset-0 bg-black/20 group-hover:bg-black/10 transition-colors flex items-center justify-center">
                     <div className="p-1.5 bg-white/20 backdrop-blur-sm rounded-full border border-white/30 group-hover:scale-110 transition-transform">
                       <Play className="size-4 text-white fill-current" />
                     </div>
+                  </div>
                 </div>
-              </div>
-            </DataTableCell>
-            <DataTableCell align="center">
-              <div className="flex items-center justify-center gap-2">
-                <button 
-                  onClick={() => setPreviewViolation(v)}
-                  className="p-2.5 rounded-xl bg-slate-900 text-sky-400 border border-white/5 shadow-lg hover:bg-slate-800 transition-all transform active:scale-90"
-                  title="ພິມລາຍງານ"
-                >
-                  <Printer className="size-4" />
-                </button>
-                <button 
-                  onClick={() => setDeleteId(v.id)}
-                  className="p-2.5 rounded-xl bg-slate-900 text-rose-500 border border-white/5 shadow-lg hover:bg-slate-800 transition-all transform active:scale-90"
-                  title="ລຶບລາຍການ"
-                >
-                  <Trash2 className="size-4" />
-                </button>
-              </div>
-            </DataTableCell>
-          </DataTableRow>
-        ))}
+              </DataTableCell>
+
+              <DataTableCell align="center">
+                <div className="flex items-center justify-center gap-2">
+                  <button onClick={() => setPreviewViolation(v)} className="p-2.5 rounded-xl bg-slate-900 text-sky-400 border border-white/5 shadow-lg hover:bg-slate-800 transition-all transform active:scale-90" title="ພິມລາຍງານ">
+                    <Printer className="size-4" />
+                  </button>
+                  <button onClick={() => setDeleteId(v.id)} className="p-2.5 rounded-xl bg-slate-900 text-rose-500 border border-white/5 shadow-lg hover:bg-slate-800 transition-all transform active:scale-90" title="ລຶບລາຍການ">
+                    <Trash2 className="size-4" />
+                  </button>
+                </div>
+              </DataTableCell>
+            </DataTableRow>
+          )
+        })}
       </DataTable>
 
       {/* Image Preview Modal */}
@@ -264,7 +291,7 @@ export default function DataPage() {
             <div className="p-8 border-b border-white/5 flex justify-between items-center bg-slate-900/50">
               <div className="flex items-center gap-4 text-sky-400">
                  <div className="p-3 bg-sky-500/10 rounded-2xl"><Eye className="size-6" /></div>
-                 <h3 className="font-black text-2xl uppercase tracking-tighter text-white">Full Evidence View</h3>
+                 <h3 className="font-black text-2xl uppercase tracking-tighter text-white">{selectedImageLabel || "ຮູບຫຼັກຖານ"}</h3>
               </div>
               <button 
                 onClick={() => setSelectedImage(null)}
