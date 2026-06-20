@@ -38,12 +38,21 @@ def init_database():
                 );
             """)
 
-            # 🛠️ Migration: ตรวจสอบและเพิ่มคอลัมน์ camera_id หากยังไม่มี (สำหรับเคสที่ตารางมีอยู่แล้ว)
+            # 🛠️ Migrations: เพิ่มคอลัมน์ที่อาจยังไม่มีในตารางเก่า
             cur.execute("""
                 DO $$
                 BEGIN
                     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='violations' AND column_name='camera_id') THEN
                         ALTER TABLE violations ADD COLUMN camera_id INTEGER REFERENCES cameras(id) ON DELETE SET NULL;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='violations' AND column_name='crop_image_path') THEN
+                        ALTER TABLE violations ADD COLUMN crop_image_path TEXT;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='violations' AND column_name='context_image_path') THEN
+                        ALTER TABLE violations ADD COLUMN context_image_path TEXT;
+                    END IF;
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='violations' AND column_name='plate_image_path') THEN
+                        ALTER TABLE violations ADD COLUMN plate_image_path TEXT;
                     END IF;
                 END
                 $$;

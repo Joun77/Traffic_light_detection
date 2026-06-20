@@ -1,18 +1,20 @@
 {
-  "roi_y": 2924,
-  "roi_x": 778,
+  "roi_y": 3037,
+  "roi_x": 1673,
   "traffic_light_box": [
-    1043,
-    2199,
-    1530,
-    2625
+    941,
+    2036,
+    1455,
+    2658
   ],
   "vehicle_zone": [
-    728,
-    2801,
-    1580,
-    3728
+    391,
+    2710,
+    1788,
+    3719
   ],
   "scale": 1.0,
-  "video_path": null
+  "video_path": null,
+  "camera_id": null,
+  "has_reference": null
 }

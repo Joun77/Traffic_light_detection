@@ -96,6 +96,9 @@ class ViolationReport(BaseModel):
     vehicle_type: str
     light_status: str
     image_path: str
+    crop_image_path: Optional[str] = None     # tight vehicle crop for LPR
+    context_image_path: Optional[str] = None  # vehicle + traffic light merged region
+    plate_image_path: Optional[str] = None    # license plate zone, 2× upscaled
     video_path: str
     camera_id: Optional[int] = None
 
@@ -133,11 +136,17 @@ async def add_violation(report: ViolationReport):
         conn = psycopg2.connect(**DB_CONFIG)
         cur = conn.cursor(cursor_factory=RealDictCursor)
         
-        # Explicitly list columns for safety
         cur.execute("""
-            INSERT INTO violations (vehicle_id, vehicle_type, light_status, image_path, video_path, camera_id)
-            VALUES (%s, %s, %s, %s, %s, %s) RETURNING id
-        """, (report.vehicle_id, report.vehicle_type, report.light_status, report.image_path, report.video_path, report.camera_id))
+            INSERT INTO violations
+                (vehicle_id, vehicle_type, light_status, image_path, crop_image_path,
+                 context_image_path, plate_image_path, video_path, camera_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
+        """, (
+            report.vehicle_id, report.vehicle_type, report.light_status,
+            report.image_path, report.crop_image_path,
+            report.context_image_path, report.plate_image_path,
+            report.video_path, report.camera_id,
+        ))
         new_row = cur.fetchone()
         conn.commit()
         
@@ -161,24 +170,25 @@ async def add_violation(report: ViolationReport):
 
 
 @app.get("/violations")
-async def get_violations(limit: int = 10):
+async def get_violations(limit: int = 100, camera_id: Optional[int] = None):
     try:
         conn = psycopg2.connect(**DB_CONFIG)
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        # Verify if camera_id exists before joining (Safety Fallback)
         cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'violations' AND column_name = 'camera_id'")
         has_cam_id = cur.fetchone()
-        
+
         if has_cam_id:
-            query = """
-                SELECT v.*, c.location_name, c.village, c.district, c.province 
+            where = f"WHERE v.camera_id = {camera_id}" if camera_id is not None else ""
+            query = f"""
+                SELECT v.*, c.location_name, c.village, c.district, c.province
                 FROM violations v
                 LEFT JOIN cameras c ON v.camera_id = c.id
+                {where}
                 ORDER BY v.time_stamp DESC LIMIT %s
             """
         else:
             query = "SELECT * FROM violations ORDER BY time_stamp DESC LIMIT %s"
-            
+
         cur.execute(query, (limit,))
         rows = cur.fetchall()
         cur.close(); conn.close()
@@ -271,6 +281,17 @@ async def get_cameras():
         cur.execute("SELECT * FROM cameras ORDER BY id ASC")
         rows = cur.fetchall(); cur.close(); conn.close()
         return [dict(row) for row in rows]
+    except Exception as e: return {"error": str(e)}
+
+@app.get("/cameras/{camera_db_id}")
+async def get_camera(camera_db_id: int):
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT * FROM cameras WHERE id = %s", (camera_db_id,))
+        row = cur.fetchone(); cur.close(); conn.close()
+        if not row: return {"error": "Camera not found"}
+        return dict(row)
     except Exception as e: return {"error": str(e)}
 
 @app.post("/cameras/{camera_db_id}/upload-video")
@@ -427,6 +448,34 @@ DB_CONFIG = {
     "password": os.getenv("DB_PASS", "traffic_pass"),
     "port":     os.getenv("DB_PORT", "5432")
 }
+
+@app.on_event("startup")
+async def run_migrations():
+    """Add new image columns to violations table if they don't exist yet."""
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        cur = conn.cursor()
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='violations' AND column_name='crop_image_path') THEN
+                    ALTER TABLE violations ADD COLUMN crop_image_path TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='violations' AND column_name='context_image_path') THEN
+                    ALTER TABLE violations ADD COLUMN context_image_path TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='violations' AND column_name='plate_image_path') THEN
+                    ALTER TABLE violations ADD COLUMN plate_image_path TEXT;
+                END IF;
+            END
+            $$;
+        """)
+        conn.commit()
+        cur.close()
+        conn.close()
+        logger.info("✅ DB migration: image columns ready")
+    except Exception as e:
+        logger.warning(f"⚠️ Migration skipped (DB may not be ready): {e}")
 
 if __name__ == "__main__":
     import uvicorn
