@@ -102,9 +102,10 @@ class VehicleTrack:
     cross_t   — timestamp when center first crossed stop_x (set once per crossing event)
     state     — last verdict: approaching | pending | violated | safe_passage
     """
-    positions: deque
-    cross_t:   Optional[float] = None
-    state:     str = 'approaching'
+    positions:    deque
+    cross_t:      Optional[float] = None
+    state:        str = 'approaching'
+    initial_side: Optional[float] = None  # signed_dist when first detected far from line
 
 
 # ══════════════════════════════════════════════════════════════
@@ -238,12 +239,31 @@ class ViolationChecker:
         self.roi_y         = legacy_roi_y
 
     def stop_x(self) -> Optional[int]:
-        """X-coordinate of the stop threshold."""
+        """Legacy X-coordinate fallback (used for display annotation only)."""
         if self.stop_line:
             return (self.stop_line[0][0] + self.stop_line[1][0]) // 2
         return self.roi_x
 
     # ── Helpers ───────────────────────────────────────────────
+
+    def _signed_dist(self, cx: float, cy: float) -> Optional[float]:
+        """
+        Signed perpendicular distance from (cx, cy) to stop_line.
+        Works for ANY line orientation — horizontal, vertical, or diagonal.
+        Positive on one side, negative on the other.
+        Legacy roi_x fallback: positive = right of line (approaching from right).
+        """
+        if self.stop_line:
+            x1, y1 = self.stop_line[0]
+            x2, y2 = self.stop_line[1]
+            dx = x2 - x1; dy = y2 - y1
+            length = math.sqrt(dx * dx + dy * dy)
+            if length < 1e-9:
+                return None
+            return ((cx - x1) * dy - (cy - y1) * dx) / length
+        if self.roi_x is not None:
+            return float(self.roi_x - cx)
+        return None
 
     def _has_moved(self, track: VehicleTrack) -> bool:
         """True if vehicle displaced ≥ MIN_MOVEMENT_PX since previous frame."""
@@ -253,83 +273,110 @@ class ViolationChecker:
         _, cx,   cy   = track.positions[-1]
         return abs(cx - p_cx) > MIN_MOVEMENT_PX or abs(cy - p_cy) > MIN_MOVEMENT_PX
 
-    def _x_net_rightward(self, track: VehicleTrack) -> bool:
+    def _net_along_line(self, track: VehicleTrack) -> bool:
         """
-        True when the vehicle's NET x displacement over SAFE_PASS_FRAMES is
-        greater than NET_RIGHT_THRESHOLD pixels.
-
-        Why net displacement instead of strict monotonic:
-          Camera shake = random ±noise → net Δx ≈ 0 over multiple frames.
-          Real rightward movement = consistently accumulates → net Δx >> threshold.
-          Strict monotonic fails with any single jitter frame; net is robust.
+        True when vehicle's net movement is mostly PARALLEL to the stop_line.
+        Detects right-turns and parallel/oncoming-lane traffic → safe_passage.
+        Robust to camera shake: uses net displacement over SAFE_PASS_FRAMES.
         """
         n = SAFE_PASS_FRAMES + 1
         if len(track.positions) < n:
             return False
         recent = list(track.positions)[-n:]
-        net_dx = recent[-1][1] - recent[0][1]   # last_cx − first_cx
-        return net_dx > NET_RIGHT_THRESHOLD
+        net_dx = recent[-1][1] - recent[0][1]
+        net_dy = recent[-1][2] - recent[0][2]
+        net_dist = math.sqrt(net_dx ** 2 + net_dy ** 2)
+        if net_dist < NET_RIGHT_THRESHOLD:
+            return False
+
+        if not self.stop_line:
+            # Legacy: x going right only
+            return net_dx > NET_RIGHT_THRESHOLD
+
+        x1, y1 = self.stop_line[0]; x2, y2 = self.stop_line[1]
+        ldx = x2 - x1; ldy = y2 - y1
+        length = math.sqrt(ldx * ldx + ldy * ldy)
+        if length < 1e-9:
+            return False
+
+        proj_along = abs(net_dx * ldx / length + net_dy * ldy / length)
+        proj_perp  = abs(net_dx * ldy / length - net_dy * ldx / length)
+
+        # Moving mostly along the line → parallel → safe (right-turn / wrong lane)
+        return proj_along > proj_perp * 1.5 and proj_along > NET_RIGHT_THRESHOLD
 
     # ── Main decision gate ────────────────────────────────────
 
     def evaluate_track(self, track: VehicleTrack, light: str) -> str:
         """
-        Returns and stores verdict in track.state:
-          'safe_passage' — x consistently increasing (only non-violation case)
-          'violated'     — crossed stop_x during red, x NOT increasing, vehicle moving
-          'pending'      — crossed but within grace window (waiting for trajectory)
-          'approaching'  — not crossed yet, or light not red
+        Returns and stores verdict in track.state.
+        Uses signed perpendicular distance to the stop_line so any line
+        orientation (horizontal, vertical, diagonal) works correctly.
+
+          'safe_passage' — moving parallel to line (turn / wrong lane)
+          'violated'     — crossed stop_line during red, vehicle moving
+          'pending'      — crossed but inside grace window
+          'approaching'  — not crossed yet
         """
-        sx = self.stop_x()
-        if sx is None or not track.positions:
+        if not track.positions:
             return track.state
 
         _, cx, cy = track.positions[-1]
-        now       = track.positions[-1][0]
+        now = track.positions[-1][0]
 
-        in_zone = abs(cx - sx) <= self.tolerance
-        crossed = cx <= sx - self.tolerance     # clearly past the stop line
+        sd = self._signed_dist(cx, cy)
+        if sd is None:
+            return track.state
 
-        # Reset when vehicle retreats completely — allows re-triggering
-        if not in_zone and not crossed and track.state in ('safe_passage', 'violated'):
-            track.state = 'approaching'
-            track.cross_t = None
+        # Record which side the vehicle started on (set once, far from line)
+        if track.initial_side is None and abs(sd) > self.tolerance * 2:
+            track.initial_side = sd
+
+        # Crossing: vehicle is now clearly on the OPPOSITE side from where it started
+        if track.initial_side is not None:
+            crossed = (track.initial_side * sd) < 0 and abs(sd) > self.tolerance * 0.5
+            in_zone = abs(sd) <= self.tolerance
+        else:
+            crossed = False
+            in_zone = True   # appeared right at the line — treat as in-zone
+
+        # Reset when vehicle returns well past initial side (new approach event)
+        back_to_start = (track.initial_side is not None and
+                         (track.initial_side * sd) > self.tolerance * 2)
+        if back_to_start and track.state in ('safe_passage', 'violated'):
+            track.state      = 'approaching'
+            track.cross_t    = None
+            track.initial_side = None   # re-detect initial side for next pass
 
         # Preserve confirmed violations
         if track.state == 'violated':
             return 'violated'
 
-        # Track first crossing moment
+        # Record first crossing moment
         if crossed and track.cross_t is None:
             track.cross_t = now
 
-        # ── SAFE PASSAGE — only non-violation case ────────────
-        # x consistently increasing = vehicle going right (oncoming lane / right turn)
-        # Checked at any point: if true, never a violation regardless of light
-        if self._x_net_rightward(track):
+        # ── SAFE PASSAGE — parallel movement → not a crossing violation ──
+        if self._net_along_line(track):
             track.state = 'safe_passage'
             return 'safe_passage'
 
         if track.state == 'safe_passage':
-            # x was going right, now it stopped — could be pausing before turn
-            # Keep as safe_passage until vehicle retreats and comes back
             return 'safe_passage'
 
         # ── Light gate + crossing gate ────────────────────────
         if light != 'red' or not crossed:
             return 'approaching'
 
-        # ── Movement check — reject truly stationary vehicles ──
+        # ── Movement check — reject stationary vehicles ───────
         if not self._has_moved(track):
             return 'pending'
 
-        # ── Grace window — give trajectory time to develop ────
-        # Allows _x_net_rightward to accumulate SAFE_PASS_FRAMES before deciding
+        # ── Grace window — let trajectory develop ─────────────
         if track.cross_t is not None and (now - track.cross_t) < SAFE_PASS_CHECK_SECS:
             return 'pending'
 
         # ── VIOLATION ─────────────────────────────────────────
-        # Crossed stop_x during red, x NOT consistently increasing, vehicle is moving
         track.state = 'violated'
         return 'violated'
 
@@ -510,6 +557,7 @@ def load_roi_config() -> Tuple:
     stop_line = direction_ref = lane_polygons = None
     tl_box = veh_zone = None
     legacy_roi_x = legacy_roi_y = None
+    roi_x_line = None
 
     if os.path.exists(ROI_CONFIG):
         try:
@@ -522,6 +570,7 @@ def load_roi_config() -> Tuple:
             veh_zone      = cfg.get('vehicle_zone')
             legacy_roi_x  = cfg.get('roi_x')
             legacy_roi_y  = cfg.get('roi_y')
+            roi_x_line    = cfg.get('roi_x_line')
         except Exception:
             pass
 
@@ -551,7 +600,7 @@ def load_roi_config() -> Tuple:
         except: pass
 
     return (stop_line, direction_ref, lane_polygons,
-            tl_box, veh_zone, legacy_roi_x, legacy_roi_y)
+            tl_box, veh_zone, legacy_roi_x, legacy_roi_y, roi_x_line)
 
 
 def scale_points(pts: list, scale: float) -> list:
@@ -611,7 +660,7 @@ def send_light(status: str) -> None:
 # ══════════════════════════════════════════════════════════════
 def run() -> None:
     (stop_line, direction_ref, lane_polygons,
-     tl_box, veh_zone, legacy_roi_x, legacy_roi_y) = load_roi_config()
+     tl_box, veh_zone, legacy_roi_x, legacy_roi_y, roi_x_line) = load_roi_config()
 
     print(f"🚀 AI v4 | cam={args.camera_db_id} | "
           f"stop_line={stop_line} dir_ref={direction_ref} "
@@ -637,6 +686,7 @@ def run() -> None:
     s_lane_polys = scale_polygon_list(lane_polygons, scale) if lane_polygons else []
     s_roi_x      = int(legacy_roi_x * scale) if legacy_roi_x else None
     s_roi_y      = int(legacy_roi_y * scale) if legacy_roi_y else None
+    s_roi_x_line = scale_points(roi_x_line, scale) if roi_x_line else None
     s_tl_box     = scale_box(tl_box,   scale) if tl_box   else None
     s_vz         = scale_box(veh_zone, scale) if veh_zone else None
 
@@ -821,6 +871,10 @@ def run() -> None:
             cv2.putText(display, "STOP",
                         (s_stop_line[0][0]+4, s_stop_line[0][1]-8),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+        elif s_roi_x_line:
+            draw_dashed_line(display,
+                             tuple(s_roi_x_line[0]), tuple(s_roi_x_line[1]),
+                             (100, 200, 255), 2, 15, 10)
         elif s_roi_x:
             draw_dashed_line(display, (s_roi_x, 0), (s_roi_x, proc_h),
                              (0, 255, 255), 2, 15, 10)

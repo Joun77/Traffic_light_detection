@@ -84,6 +84,9 @@ ai_process = None
 class ROIConfig(BaseModel):
     roi_y: Optional[int] = None
     roi_x: Optional[int] = None
+    stop_line: Optional[List[List[int]]] = None          # [[x1,y1],[x2,y2]] from Y tool
+    roi_x_line: Optional[List[List[int]]] = None         # [[x1,y1],[x2,y2]] from X tool
+    lane_polygons: Optional[List[List[List[int]]]] = None # [[[x,y],...], ...] from LANE tool
     traffic_light_box: Optional[List[int]] = None
     vehicle_zone: Optional[List[int]] = None
     scale: Optional[float] = 1.0
@@ -256,22 +259,36 @@ async def delete_all_violations():
 
 def convert_video_task(camera_db_id: int, temp_path: str, output_path: str, output_filename: str):
     try:
-        cap = cv2.VideoCapture(temp_path)
-        w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-        out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'avc1'), fps, (w, h))
-        if not out.isOpened(): out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret: break
-            out.write(frame)
-        cap.release(); out.release()
+        try:
+            from vidstab import VidStab
+            stabilizer = VidStab()
+            stabilizer.stabilize(
+                input_path=temp_path,
+                output_path=output_path,
+                smoothing_window=30,
+                output_fourcc='mp4v',
+            )
+            logger.info(f"✅ Video stabilized: {output_filename}")
+        except Exception as stab_err:
+            logger.warning(f"⚠️ Stabilization failed, converting without it: {stab_err}")
+            cap = cv2.VideoCapture(temp_path)
+            w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+            out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'avc1'), fps, (w, h))
+            if not out.isOpened(): out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret: break
+                out.write(frame)
+            cap.release(); out.release()
+    finally:
         if os.path.exists(temp_path): os.remove(temp_path)
-        conn = psycopg2.connect(**DB_CONFIG)
-        cur = conn.cursor()
-        cur.execute("UPDATE cameras SET rtsp_url = %s WHERE id = %s", (f"uploads/{output_filename}", camera_db_id))
-        conn.commit(); cur.close(); conn.close()
-    except Exception as e: print(f"Background Err: {e}")
+        try:
+            conn = psycopg2.connect(**DB_CONFIG)
+            cur = conn.cursor()
+            cur.execute("UPDATE cameras SET rtsp_url = %s WHERE id = %s", (f"uploads/{output_filename}", camera_db_id))
+            conn.commit(); cur.close(); conn.close()
+        except Exception as db_err: logger.error(f"DB update error: {db_err}")
 
 @app.get("/cameras")
 async def get_cameras():
