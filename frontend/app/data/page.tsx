@@ -301,7 +301,7 @@ export default function DataPage() {
               </button>
             </div>
             <div className="bg-black p-4 text-center">
-               <img src={selectedImage} alt="Violation Full Evidence" className="inline-block h-auto max-h-[75vh] object-contain rounded-2xl mx-auto shadow-2xl" />
+               <img src={selectedImage} alt="Violation Full Evidence" className="w-full h-auto max-h-[75vh] object-contain rounded-2xl shadow-2xl" />
             </div>
           </div>
         </div>

@@ -431,6 +431,13 @@ class EvidenceCapture:
         self.frame_h     = frame_h
         os.makedirs(os.path.join(output_base, 'evidences', 'images'), exist_ok=True)
         os.makedirs(os.path.join(output_base, 'evidences', 'videos'), exist_ok=True)
+        plate_model_path = os.path.join(os.path.dirname(__file__), '..', 'models', 'plate_detector', 'best.pt')
+        self.plate_model = None
+        if os.path.exists(plate_model_path):
+            try:
+                self.plate_model = YOLO(plate_model_path)
+            except Exception:
+                pass
 
     def save_images(self, frame: np.ndarray, vehicle: VehicleState,
                     light_status: str, abs_img: str, abs_crop: str,
@@ -455,12 +462,16 @@ class EvidenceCapture:
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
         cv2.imwrite(abs_img, full)
 
-        # _crop.jpg: tight vehicle crop
+        # _crop.jpg: tight vehicle crop, upscaled to min 640px wide
         p   = self.CROP_PAD
         cx1 = max(0, x1-p);            cy1 = max(0, y1-p)
         cx2 = min(self.frame_w, x2+p); cy2 = min(self.frame_h, y2+p)
         crop = frame[cy1:cy2, cx1:cx2]
-        cv2.imwrite(abs_crop, crop if crop.size > 0 else frame[y1:y2, x1:x2])
+        if crop.size == 0:
+            crop = frame[y1:y2, x1:x2]
+        up_scale = max(2, 640 // max(crop.shape[1], 1))
+        crop_up = cv2.resize(crop, (crop.shape[1] * up_scale, crop.shape[0] * up_scale), interpolation=cv2.INTER_CUBIC)
+        cv2.imwrite(abs_crop, crop_up)
 
         # _context.jpg: union region covering vehicle + traffic light
         CTX_PAD = 40
@@ -482,19 +493,38 @@ class EvidenceCapture:
                         (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 255), 2)
             cv2.imwrite(abs_context, ctx)
 
-        # _plate.jpg: bottom 40% of vehicle bbox (plate region), upscaled 2×
-        plate_h = max(1, (y2 - y1) * 40 // 100)
-        px1 = max(0, x1 - 12)
-        py1 = max(0, y2 - plate_h)
-        px2 = min(self.frame_w, x2 + 12)
-        py2 = min(self.frame_h, y2)
-        plate = frame[py1:py2, px1:px2]
-        if plate.size > 0:
-            plate_up = cv2.resize(
-                plate, (plate.shape[1] * 2, plate.shape[0] * 2),
-                interpolation=cv2.INTER_CUBIC,
-            )
-            cv2.imwrite(abs_plate, plate_up)
+        # _plate.jpg: OBB model detection on vehicle crop, fallback to bottom 40%
+        vehicle_crop = crop if crop.size > 0 else frame[y1:y2, x1:x2]
+        plate_saved = False
+        if self.plate_model is not None and vehicle_crop.size > 0:
+            try:
+                res = self.plate_model(vehicle_crop, conf=0.25, verbose=False)[0]
+                if res.obb is not None and len(res.obb) > 0:
+                    best_idx = int(res.obb.conf.cpu().numpy().argmax())
+                    bx1, by1, bx2, by2 = res.obb.xyxy[best_idx].cpu().numpy().astype(int)
+                    pad = 4
+                    bx1 = max(0, bx1 - pad); by1 = max(0, by1 - pad)
+                    bx2 = min(vehicle_crop.shape[1], bx2 + pad)
+                    by2 = min(vehicle_crop.shape[0], by2 + pad)
+                    plate = vehicle_crop[by1:by2, bx1:bx2]
+                    if plate.size > 0:
+                        plate_up = cv2.resize(
+                            plate, (plate.shape[1] * 2, plate.shape[0] * 2),
+                            interpolation=cv2.INTER_CUBIC,
+                        )
+                        cv2.imwrite(abs_plate, plate_up)
+                        plate_saved = True
+            except Exception:
+                pass
+        if not plate_saved and vehicle_crop.size > 0:
+            plate_h = max(1, (y2 - y1) * 40 // 100)
+            fallback = vehicle_crop[max(0, vehicle_crop.shape[0] - plate_h):, :]
+            if fallback.size > 0:
+                plate_up = cv2.resize(
+                    fallback, (fallback.shape[1] * 2, fallback.shape[0] * 2),
+                    interpolation=cv2.INTER_CUBIC,
+                )
+                cv2.imwrite(abs_plate, plate_up)
 
     def open_video(self, buffer: deque, fps: int, vehicle: VehicleState,
                    abs_vid: str) -> Tuple["cv2.VideoWriter", Tuple[int, int, int, int]]:
