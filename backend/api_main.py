@@ -112,6 +112,22 @@ class CameraUpdate(BaseModel):
     province: Optional[str] = None
     is_active: Optional[bool] = None
 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+# --- 🔐 Login Endpoint ---
+
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin1234")
+
+@app.post("/login")
+async def login(data: LoginRequest):
+    if data.username == ADMIN_USERNAME and data.password == ADMIN_PASSWORD:
+        return {"success": True, "username": data.username}
+    from fastapi import HTTPException
+    raise HTTPException(status_code=401, detail="ຊື່ຜູ້ໃຊ້ ຫຼື ລະຫັດຜ່ານບໍ່ຖືກຕ້ອງ")
+
 # --- 🚦 Light Status Endpoint ---
 
 @app.post("/set-current-light")

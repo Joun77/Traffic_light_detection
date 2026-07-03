@@ -113,7 +113,6 @@ export default function SettingsPage() {
           <Field label="ຢືນຢັນລະຫັດຜ່ານ">
             <input type="password" className={inputClass} placeholder="••••••••" />
           </Field>
-          <Toggle label="ການຢືນຢັນ 2 ຊັ້ນ (2FA)" />
         </SectionCard>
       </div>
 
