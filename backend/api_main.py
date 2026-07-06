@@ -282,7 +282,7 @@ def convert_video_task(camera_db_id: int, temp_path: str, output_path: str, outp
                 input_path=temp_path,
                 output_path=output_path,
                 smoothing_window=30,
-                output_fourcc='mp4v',
+                output_fourcc='avc1',
             )
             logger.info(f"✅ Video stabilized: {output_filename}")
         except Exception as stab_err:
@@ -419,26 +419,75 @@ async def video_feed():
 
 @app.post("/set-roi")
 async def set_roi(config: ROIConfig):
-    with open(CONFIG_FILE, "w") as f: json.dump(config.model_dump(), f, indent=2)
+    if config.camera_id is not None:
+        target_file = os.path.join(DATA_DIR, f"roi_config_{config.camera_id}.json")
+    else:
+        target_file = CONFIG_FILE
+    with open(target_file, "w") as f: json.dump(config.model_dump(), f, indent=2)
     return {"status": "success"}
 
 @app.post("/set-roi-reference")
-async def set_roi_reference(file: UploadFile = File(...)):
+async def set_roi_reference(camera_id: Optional[int] = None, file: UploadFile = File(...)):
     try:
-        ref_path = os.path.join(DATA_DIR, "roi_reference.jpg")
+        if camera_id is not None:
+            filename = f"roi_reference_{camera_id}.jpg"
+        else:
+            filename = "roi_reference.jpg"
+        ref_path = os.path.join(DATA_DIR, filename)
         with open(ref_path, "wb") as buffer: shutil.copyfileobj(file.file, buffer)
-        return {"status": "success", "url": "/static-data/roi_reference.jpg"}
+        return {"status": "success", "url": f"/static-data/{filename}"}
     except Exception as e: return {"status": "error", "message": str(e)}
 
 @app.get("/get-roi")
-async def get_roi():
-    ref_exists = os.path.exists(os.path.join(DATA_DIR, "roi_reference.jpg"))
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, "r") as f: 
+async def get_roi(camera_id: Optional[int] = None):
+    if camera_id is not None:
+        ref_filename = f"roi_reference_{camera_id}.jpg"
+        config_path = os.path.join(DATA_DIR, f"roi_config_{camera_id}.json")
+    else:
+        ref_filename = "roi_reference.jpg"
+        config_path = CONFIG_FILE
+        
+    ref_exists = os.path.exists(os.path.join(DATA_DIR, ref_filename))
+    
+    # Try to generate reference frame dynamically if it doesn't exist
+    if camera_id is not None and not ref_exists:
+        try:
+            conn = psycopg2.connect(**DB_CONFIG)
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute("SELECT rtsp_url FROM cameras WHERE id = %s", (camera_id,))
+            row = cur.fetchone()
+            cur.close(); conn.close()
+            if row and row['rtsp_url']:
+                if row['rtsp_url'].startswith("uploads/"):
+                    video_to_use = os.path.join(UPLOAD_DIR, row['rtsp_url'].replace("uploads/", ""))
+                else:
+                    video_to_use = os.path.join(BASE_DIR, "..", row['rtsp_url'])
+                
+                if os.path.exists(video_to_use):
+                    cap = cv2.VideoCapture(video_to_use)
+                    ret, frame = cap.read()
+                    if ret and frame is not None:
+                        ref_path = os.path.join(DATA_DIR, ref_filename)
+                        cv2.imwrite(ref_path, frame)
+                        ref_exists = True
+                    cap.release()
+        except Exception as e:
+            logger.error(f"Error generating dynamic reference frame: {e}")
+            
+    if os.path.exists(config_path):
+        with open(config_path, "r") as f: 
             data = json.load(f)
             data["has_reference"] = ref_exists
             return data
-    return {"roi_y": None, "roi_x": None, "traffic_light_box": None, "vehicle_zone": None, "scale": 1.0, "has_reference": ref_exists}
+            
+    if camera_id is not None and os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE, "r") as f:
+            data = json.load(f)
+            data["has_reference"] = ref_exists
+            data["camera_id"] = camera_id
+            return data
+            
+    return {"roi_y": None, "roi_x": None, "traffic_light_box": None, "vehicle_zone": None, "scale": 1.0, "has_reference": ref_exists, "camera_id": camera_id}
 
 @app.post("/start-detection")
 async def start_detection(config: ROIConfig):

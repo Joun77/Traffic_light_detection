@@ -15,16 +15,18 @@ const CLOSE_SNAP  = 15   // px — distance to first point to auto-close polygon
 
 interface ROIEditorProps {
   videoUrl: string
+  cameraId?: number | null
   onSave: (config: any, frameBlob: Blob) => void
   onCancel: () => void
 }
 
-export function ROIEditor({ videoUrl, onSave, onCancel }: ROIEditorProps) {
+export function ROIEditor({ videoUrl, cameraId, onSave, onCancel }: ROIEditorProps) {
   const videoRef  = useRef<HTMLVideoElement>(null)
   const imageRef  = useRef<HTMLImageElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
   const isVideo = videoUrl.includes("#t=") || videoUrl.includes(".mp4") || videoUrl.includes(".mov")
+  const formattedVideoUrl = isVideo && !videoUrl.includes("#t=") ? `${videoUrl}#t=0.1` : videoUrl
   const [isPortrait, setIsPortrait] = useState(false)
 
   // 2-point lines
@@ -50,7 +52,8 @@ export function ROIEditor({ videoUrl, onSave, onCancel }: ROIEditorProps) {
   useEffect(() => {
     const fetchAndApply = async () => {
       try {
-        const res    = await fetch("http://localhost:8000/get-roi")
+        const url    = cameraId ? `http://localhost:8000/get-roi?camera_id=${cameraId}` : "http://localhost:8000/get-roi"
+        const res    = await fetch(url)
         const config = await res.json()
         const media  = isVideo ? videoRef.current : imageRef.current
         if (!media) return
@@ -347,7 +350,7 @@ export function ROIEditor({ videoUrl, onSave, onCancel }: ROIEditorProps) {
     <div className={cn("flex gap-8 w-full items-start justify-center", isPortrait ? "flex-row" : "flex-col items-center")}>
       <div className={cn("relative rounded-[2.5rem] overflow-hidden border-[6px] border-white/5 bg-black shadow-2xl flex items-center justify-center max-h-[60vh]", isPortrait ? "w-[420px] shrink-0" : "w-full max-w-5xl")}>
         {isVideo ? (
-          <video ref={videoRef} src={videoUrl} crossOrigin="anonymous" className="w-full h-auto max-h-[60vh] block object-contain" />
+          <video ref={videoRef} src={formattedVideoUrl} crossOrigin="anonymous" className="w-full h-auto max-h-[60vh] block object-contain" />
         ) : (
           <img ref={imageRef} src={videoUrl} crossOrigin="anonymous" className="w-full h-auto max-h-[60vh] block object-contain" />
         )}

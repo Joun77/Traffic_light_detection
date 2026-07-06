@@ -589,9 +589,15 @@ def load_roi_config() -> Tuple:
     legacy_roi_x = legacy_roi_y = None
     roi_x_line = None
 
-    if os.path.exists(ROI_CONFIG):
+    roi_config_path = ROI_CONFIG
+    if args.camera_db_id is not None:
+        cam_specific_path = os.path.join(BASE_DIR, f'../data/roi_config_{args.camera_db_id}.json')
+        if os.path.exists(cam_specific_path):
+            roi_config_path = cam_specific_path
+
+    if os.path.exists(roi_config_path):
         try:
-            with open(ROI_CONFIG) as f:
+            with open(roi_config_path) as f:
                 cfg = json.load(f)
             stop_line     = cfg.get('stop_line')
             direction_ref = cfg.get('direction_ref')

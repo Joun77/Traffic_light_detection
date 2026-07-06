@@ -93,7 +93,7 @@ export default function MonitorPage() {
       setIsProcessing(false)
       try {
         await fetch("http://localhost:8000/stop-detection", { method: "POST" })
-        const roiRes = await fetch("http://localhost:8000/get-roi")
+        const roiRes = await fetch(`http://localhost:8000/get-roi?camera_id=${cam.id}`)
         const roiConfig = await roiRes.json()
         
         const startRes = await fetch("http://localhost:8000/start-detection", {
