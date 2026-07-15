@@ -302,7 +302,7 @@ export default function MonitorPage() {
                     </span>
                   </DataTableCell>
                   <DataTableCell className="text-slate-300 font-bold text-sm">
-                    {new Date(v.time_stamp).toLocaleTimeString('lo-LA')}
+                    <span suppressHydrationWarning>{new Date(v.time_stamp).toLocaleTimeString('lo-LA')}</span>
                   </DataTableCell>
 
                   {/* ຮູບຫຼັກຖານ — context crop (vehicle + traffic light) */}

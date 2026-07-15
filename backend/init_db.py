@@ -24,6 +24,21 @@ def init_database():
             )
             cur = conn.cursor()
 
+            # สร้างตาราง cameras (กล้องวงจรปิด)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS cameras (
+                    id SERIAL PRIMARY KEY,
+                    camera_id VARCHAR(50) UNIQUE,
+                    location_name VARCHAR(255),
+                    village VARCHAR(100),
+                    district VARCHAR(100),
+                    province VARCHAR(100),
+                    is_active BOOLEAN DEFAULT TRUE,
+                    rtsp_url TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+
             # สร้างตาราง violations พร้อมลิงก์กับ cameras
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS violations (
@@ -56,21 +71,6 @@ def init_database():
                     END IF;
                 END
                 $$;
-            """)
-
-            # สร้างตาราง cameras (กล้องวงจรปิด)
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS cameras (
-                    id SERIAL PRIMARY KEY,
-                    camera_id VARCHAR(50) UNIQUE,
-                    location_name VARCHAR(255),
-                    village VARCHAR(100),
-                    district VARCHAR(100),
-                    province VARCHAR(100),
-                    is_active BOOLEAN DEFAULT TRUE,
-                    rtsp_url TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
             """)
 
             # เพิ่มข้อมูลตัวอย่างกล้อง (ถ้ายังไม่มี)

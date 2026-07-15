@@ -1,8 +1,9 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
+import Link from "next/link"
 import { DashboardShell } from "@/components/dashboard-shell"
-import { Camera, Video, Trash2, Edit2, Search, Save, X, MapPin, Upload, Loader2, Play } from "lucide-react"
+import { Camera, Video, Trash2, Edit2, Search, Save, X, MapPin, Upload, Loader2, Play, Eye } from "lucide-react"
 import { DataTable, DataTableRow, DataTableCell } from "@/components/ui/data-table"
 import { VideoPreviewModal } from "@/components/video-preview-modal"
 import { UploadLoadingModal } from "@/components/upload-loading-modal"
@@ -138,8 +139,7 @@ export default function CamerasPage() {
       })
 
       if (response.ok) {
-        const data = await response.json()
-        setPreviewUrl(data.url)
+        setPreviewUrl(URL.createObjectURL(file))
         setIsPreviewOpen(true)
       } else {
         showToast("ເກີດຂໍ້ຜິດພາດໃນການອັບໂຫຼດ", "error")
@@ -235,12 +235,12 @@ export default function CamerasPage() {
             <DataTableCell className="font-black text-sky-500 text-lg">#{index + 1}</DataTableCell>
             <DataTableCell align="left" className="font-black text-slate-700 tracking-tighter uppercase">CCTV-{cam.camera_id}</DataTableCell>
             <DataTableCell align="left">
-              <div className="flex flex-col gap-1 text-left">
-                <span className="font-black text-sm text-foreground uppercase tracking-tight">{cam.location_name}</span>
+              <Link href={`/cameras/${cam.id}`} className="flex flex-col gap-1 text-left group hover:opacity-85">
+                <span className="font-black text-sm text-foreground uppercase tracking-tight group-hover:text-sky-400 transition-colors">{cam.location_name}</span>
                 <span className="text-[10px] text-muted-foreground font-bold flex items-center gap-1.5 uppercase opacity-70">
                   <MapPin className="size-3 text-rose-500" /> {cam.village}, {cam.district}, {cam.province}
                 </span>
-              </div>
+              </Link>
             </DataTableCell>
             <DataTableCell>
               <div className="flex items-center justify-center gap-2">
@@ -272,6 +272,9 @@ export default function CamerasPage() {
             </DataTableCell>
             <DataTableCell align="center">
               <div className="flex items-center justify-center gap-2">
+                <Link href={`/cameras/${cam.id}`} className="p-3 rounded-xl bg-slate-900 text-sky-450 border border-white/5 shadow-lg hover:bg-slate-800 transition-all transform active:scale-90" title="ເບິ່ງລາຍລະອຽດ">
+                  <Eye className="size-4" />
+                </Link>
                 <button onClick={() => handleUploadClick(cam.id)} className="p-3 rounded-xl bg-slate-900 text-emerald-400 border border-white/5 shadow-lg hover:bg-slate-800 transition-all transform active:scale-90" title="ອັບໂຫຼດວິດີໂອ">
                   {uploadingId === cam.id && isUploading ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
                 </button>

@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import shutil
 import subprocess
@@ -189,15 +190,33 @@ async def add_violation(report: ViolationReport):
 
 
 @app.get("/violations")
-async def get_violations(limit: int = 100, camera_id: Optional[int] = None):
+async def get_violations(limit: int = 100, camera_id: Optional[int] = None, start_date: Optional[str] = None, end_date: Optional[str] = None):
     try:
         conn = psycopg2.connect(**DB_CONFIG)
         cur = conn.cursor(cursor_factory=RealDictCursor)
+        
+        # Build dynamic WHERE clauses
+        where_clauses = []
+        params = []
+        
+        if camera_id is not None:
+            where_clauses.append("v.camera_id = %s")
+            params.append(camera_id)
+            
+        if start_date:
+            where_clauses.append("v.time_stamp >= %s")
+            params.append(f"{start_date} 00:00:00")
+            
+        if end_date:
+            where_clauses.append("v.time_stamp <= %s")
+            params.append(f"{end_date} 23:59:59")
+            
+        where = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        
         cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'violations' AND column_name = 'camera_id'")
         has_cam_id = cur.fetchone()
 
         if has_cam_id:
-            where = f"WHERE v.camera_id = {camera_id}" if camera_id is not None else ""
             query = f"""
                 SELECT v.*, c.location_name, c.village, c.district, c.province
                 FROM violations v
@@ -206,9 +225,10 @@ async def get_violations(limit: int = 100, camera_id: Optional[int] = None):
                 ORDER BY v.time_stamp DESC LIMIT %s
             """
         else:
-            query = "SELECT * FROM violations ORDER BY time_stamp DESC LIMIT %s"
-
-        cur.execute(query, (limit,))
+            query = f"SELECT v.* FROM violations v {where} ORDER BY v.time_stamp DESC LIMIT %s"
+            
+        params.append(limit)
+        cur.execute(query, tuple(params))
         rows = cur.fetchall()
         cur.close(); conn.close()
         return [dict(row) for row in rows]
@@ -335,7 +355,7 @@ async def upload_camera_video(camera_db_id: int, background_tasks: BackgroundTas
         output_filename = f"cam_{camera_db_id}_{int(time.time())}.mp4"
         output_path = os.path.join(UPLOAD_DIR, output_filename)
         background_tasks.add_task(convert_video_task, camera_db_id, temp_path, output_path, output_filename)
-        return {"status": "processing"}
+        return {"status": "processing", "url": f"/uploads/{output_filename}"}
     except Exception as e: return {"status": "error", "message": str(e)}
 
 @app.delete("/cameras/{camera_db_id}/video")
@@ -346,7 +366,7 @@ async def delete_camera_video(camera_db_id: int):
         cur.execute("SELECT rtsp_url FROM cameras WHERE id = %s", (camera_db_id,))
         row = cur.fetchone()
         if row and row['rtsp_url']:
-            abs_p = os.path.join(BASE_DIR, "..", row['rtsp_url'])
+            abs_p = os.path.join(UPLOAD_DIR, os.path.basename(row['rtsp_url']))
             if os.path.exists(abs_p): os.remove(abs_p)
             cur.execute("UPDATE cameras SET rtsp_url = NULL WHERE id = %s", (camera_db_id,))
             conn.commit()
@@ -396,9 +416,14 @@ async def update_frame(request: Request):
     try:
         contents = await request.body()
         img = cv2.imdecode(np.frombuffer(contents, np.uint8), cv2.IMREAD_COLOR)
-        if img is not None: latest_frame = img
+        if img is not None: 
+            latest_frame = img
+        else:
+            logger.warning("⚠️ update_frame: Decoded image is None!")
         return {"status": "ok"}
-    except: return {"status": "error"}
+    except Exception as e:
+        logger.error(f"❌ update_frame error: {e}")
+        return {"status": "error"}
 
 async def frame_generator():
     global latest_frame
@@ -504,7 +529,7 @@ async def start_detection(config: ROIConfig):
     if not video_to_use or not os.path.exists(video_to_use):
         return {"status": "error", "message": "Video not found"}
 
-    cmd = ["python3", "vehicle_detection_main.py", "--video", video_to_use]
+    cmd = [sys.executable, "vehicle_detection_main.py", "--video", video_to_use]
     if config.camera_id: cmd.extend(["--camera_db_id", str(config.camera_id)])
     if config.roi_y is not None: cmd.extend(["--roi_y", str(config.roi_y)])
     if config.roi_x is not None: cmd.extend(["--roi_x", str(config.roi_x)])

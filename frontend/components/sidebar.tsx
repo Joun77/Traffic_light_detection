@@ -11,7 +11,6 @@ const navItems = [
   { href: "/cameras", label: "ຈັດການກ້ອງ", icon: Camera },
   { href: "/data", label: "ປະຫວັດການລະເມີດ", icon: Layers },
   { href: "/upload-roi", label: "ຕັ້ງຄ່າພື້ນທີ່ກວດຈັບ", icon: Target },
-  { href: "/settings", label: "ຕັ້ງຄ່າລະບົບ", icon: Settings },
 ]
 
 interface SidebarProps {

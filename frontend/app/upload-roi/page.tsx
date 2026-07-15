@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { DashboardShell } from "@/components/dashboard-shell"
 import { UploadCloud, Settings2, Save, ArrowLeft, Loader2, Target, CheckCircle2, Image as ImageIcon, RefreshCcw, PlayCircle, Info, Camera, MapPin } from "lucide-react"
 import { ROIEditor } from "@/components/roi-editor"
@@ -22,6 +22,7 @@ interface CCTV {
 
 export default function UploadRoiPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [step, setStep] = useState<Step>("UPLOAD")
   const [mode, setMode] = useState<"CCTV" | "MANUAL">("CCTV")
   const [cameras, setCameras] = useState<CCTV[]>([])
@@ -43,7 +44,16 @@ export default function UploadRoiPage() {
           const res = await fetch("http://localhost:8000/cameras")
           if (res.ok) {
             const data = await res.json()
-            setCameras(data.filter((c: CCTV) => c.is_active))
+            const activeCams = data.filter((c: CCTV) => c.is_active)
+            setCameras(activeCams)
+            
+            const camParam = searchParams.get("camera")
+            if (camParam) {
+              const target = activeCams.find((c: CCTV) => c.id === parseInt(camParam))
+              if (target) {
+                handleSelectCamera(target)
+              }
+            }
           }
         } catch (e) {
           console.error("Fetch Cameras Error:", e)
@@ -53,7 +63,7 @@ export default function UploadRoiPage() {
       }
       fetchCameras()
     }
-  }, [mode])
+  }, [mode, searchParams])
 
   // 2. Fetch current default config on load as fallback (Manual Mode)
   useEffect(() => {

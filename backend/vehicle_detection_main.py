@@ -679,8 +679,8 @@ def send_frame(frame: np.ndarray) -> None:
         _, enc = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 72])
         requests.post(STREAM_URL, data=enc.tobytes(),
                       headers={'Content-Type': 'image/jpeg'}, timeout=0.1)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"DEBUG send_frame error: {e}")
 
 
 def send_light(status: str) -> None:
@@ -716,6 +716,34 @@ def run() -> None:
     proc_fps = min(src_fps, 15)
     skip     = max(1, round(src_fps / proc_fps))
     print(f"📐 {src_w}x{src_h}@{src_fps} → {proc_w}x{proc_h}@{proc_fps} (skip={skip})")
+
+    # ── Scale from reference image coordinates to actual video dimensions ──
+    ref_filename = f"roi_reference_{args.camera_db_id}.jpg" if args.camera_db_id is not None else "roi_reference.jpg"
+    ref_path = os.path.join(BASE_DIR, '../data', ref_filename)
+    if os.path.exists(ref_path):
+        ref_img = cv2.imread(ref_path)
+        if ref_img is not None:
+            ref_h, ref_w = ref_img.shape[:2]
+            ref_scale_x = src_w / ref_w
+            ref_scale_y = src_h / ref_h
+            if abs(ref_scale_x - 1.0) > 0.01 or abs(ref_scale_y - 1.0) > 0.01:
+                print(f"📐 Scaling ROI from ref ({ref_w}x{ref_h}) to video ({src_w}x{src_h}): scale_x={ref_scale_x:.4f}, scale_y={ref_scale_y:.4f}")
+                if stop_line:
+                    stop_line = [[int(pt[0] * ref_scale_x), int(pt[1] * ref_scale_y)] for pt in stop_line]
+                if direction_ref:
+                    direction_ref = [[int(pt[0] * ref_scale_x), int(pt[1] * ref_scale_y)] for pt in direction_ref]
+                if lane_polygons:
+                    lane_polygons = [[[int(pt[0] * ref_scale_x), int(pt[1] * ref_scale_y)] for pt in poly] for poly in lane_polygons]
+                if tl_box:
+                    tl_box = [int(tl_box[0] * ref_scale_x), int(tl_box[1] * ref_scale_y), int(tl_box[2] * ref_scale_x), int(tl_box[3] * ref_scale_y)]
+                if veh_zone:
+                    veh_zone = [int(veh_zone[0] * ref_scale_x), int(veh_zone[1] * ref_scale_y), int(veh_zone[2] * ref_scale_x), int(veh_zone[3] * ref_scale_y)]
+                if legacy_roi_x:
+                    legacy_roi_x = int(legacy_roi_x * ref_scale_x)
+                if legacy_roi_y:
+                    legacy_roi_y = int(legacy_roi_y * ref_scale_y)
+                if roi_x_line:
+                    roi_x_line = [[int(pt[0] * ref_scale_x), int(pt[1] * ref_scale_y)] for pt in roi_x_line]
 
     s_stop_line  = scale_points(stop_line,    scale) if stop_line    else None
     s_dir_ref    = scale_points(direction_ref, scale) if direction_ref else None

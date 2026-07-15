@@ -13,6 +13,8 @@ import { cn } from "@/lib/utils"
 
 export default function DataPage() {
   const today = getLaoISODate()
+  const [startDate, setStartDate] = useState(today)
+  const [endDate, setEndDate] = useState(today)
   const [violations, setViolations] = useState<Violation[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedImage, setSelectedImage] = useState<string | null>(null)
@@ -33,7 +35,10 @@ export default function DataPage() {
   const fetchHistory = async () => {
     setLoading(true)
     try {
-      const response = await fetch(`http://localhost:8000/violations?limit=${limit}`)
+      let url = `http://localhost:8000/violations?limit=${limit}`
+      if (startDate) url += `&start_date=${startDate}`
+      if (endDate) url += `&end_date=${endDate}`
+      const response = await fetch(url)
       if (response.ok) {
         const data = await response.json()
         if (Array.isArray(data)) {
@@ -118,7 +123,8 @@ export default function DataPage() {
           <input
             id="from"
             type="date"
-            defaultValue={today}
+            value={startDate}
+            onChange={(e) => setStartDate(e.target.value)}
             className="rounded-2xl bg-card px-5 py-3 text-card-foreground outline-none border border-border focus:border-sky-500 transition-all font-bold"
           />
         </div>
@@ -129,7 +135,8 @@ export default function DataPage() {
           <input
             id="to"
             type="date"
-            defaultValue={today}
+            value={endDate}
+            onChange={(e) => setEndDate(e.target.value)}
             className="rounded-2xl bg-card px-5 py-3 text-card-foreground outline-none border border-border focus:border-sky-500 transition-all font-bold"
           />
         </div>
@@ -143,13 +150,6 @@ export default function DataPage() {
         </button>
         
         <div className="ml-auto flex items-center gap-3">
-          <button
-            type="button"
-            className="flex items-center gap-2 rounded-2xl bg-slate-800 border border-white/5 px-6 py-3 font-black text-emerald-400 hover:bg-slate-700 transition-all active:scale-95 shadow-xl uppercase text-xs tracking-widest"
-          >
-            <FileSpreadsheet className="size-4" aria-hidden="true" />
-            Export Excel
-          </button>
           <button
             onClick={() => setIsDeletingAll(true)}
             type="button"
@@ -201,8 +201,8 @@ export default function DataPage() {
               </DataTableCell>
               <DataTableCell>
                 <div className="flex flex-col gap-0.5">
-                  <span className="flex items-center justify-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase opacity-70"><Calendar className="size-3 text-sky-500" /> {new Date(v.time_stamp).toLocaleDateString('lo-LA')}</span>
-                  <span className="flex items-center justify-center gap-1.5 text-xs font-black text-white"><Clock className="size-3 text-sky-500" /> {new Date(v.time_stamp).toLocaleTimeString('lo-LA')}</span>
+                  <span suppressHydrationWarning className="flex items-center justify-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase opacity-70"><Calendar className="size-3 text-sky-500" /> {new Date(v.time_stamp).toLocaleDateString('lo-LA')}</span>
+                  <span suppressHydrationWarning className="flex items-center justify-center gap-1.5 text-xs font-black text-white"><Clock className="size-3 text-sky-500" /> {new Date(v.time_stamp).toLocaleTimeString('lo-LA')}</span>
                 </div>
               </DataTableCell>
               <DataTableCell>
