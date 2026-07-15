@@ -349,7 +349,7 @@ export default function UploadRoiPage() {
                               "px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-wider border",
                               cam.rtsp_url ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : "bg-amber-500/10 text-amber-400 border-amber-500/20"
                             )}>
-                              {cam.rtsp_url ? "ມີວິດີໂອແລ້ວ" : "ຍັງບໍ່ມີວິດີໂอ"}
+                              {cam.rtsp_url ? "ມີວິດີໂອແລ້ວ" : "ຍັງບໍ່ມີວິດີໂອ"}
                             </span>
                           </div>
                           <div className="mt-4">
@@ -514,7 +514,7 @@ export default function UploadRoiPage() {
                    </div>
                 </div>
                 <button onClick={() => router.push("/monitor")} className="w-full flex items-center justify-center gap-3 py-6 bg-sky-500 text-white rounded-[2.5rem] font-black uppercase tracking-[0.2em] text-sm shadow-2xl shadow-sky-500/40 hover:scale-105 hover:bg-sky-600 transition-all active:scale-95">
-                   <PlayCircle className="size-6" /> ເລີ່ມການກวดຈັບ
+                   <PlayCircle className="size-6" /> ເລີ່ມການກວດຈັບ
                 </button>
               </div>
             </div>

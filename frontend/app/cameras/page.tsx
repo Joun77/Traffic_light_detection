@@ -114,7 +114,7 @@ export default function CamerasPage() {
         setIsModalOpen(false)
         showToast("ແກ້ໄຂຂໍ້ມູນສະຖານທີ່ສຳເລັດ", "success")
       }
-    } catch (error) { showToast("ເກີດຂໍ້ຜິດພາດในການບັນທຶກ", "error") }
+    } catch (error) { showToast("ເກີດຂໍ້ຜິດພາດໃນການບັນທຶກ", "error") }
   }
 
   const handleUploadClick = (id: number) => {
@@ -275,9 +275,6 @@ export default function CamerasPage() {
                 <Link href={`/cameras/${cam.id}`} className="p-3 rounded-xl bg-slate-900 text-sky-450 border border-white/5 shadow-lg hover:bg-slate-800 transition-all transform active:scale-90" title="ເບິ່ງລາຍລະອຽດ">
                   <Eye className="size-4" />
                 </Link>
-                <button onClick={() => handleUploadClick(cam.id)} className="p-3 rounded-xl bg-slate-900 text-emerald-400 border border-white/5 shadow-lg hover:bg-slate-800 transition-all transform active:scale-90" title="ອັບໂຫຼດວິດີໂອ">
-                  {uploadingId === cam.id && isUploading ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
-                </button>
                 <button onClick={() => { setEditingCamera({...cam}); setIsModalOpen(true); }} className="p-3 rounded-xl bg-slate-900 text-sky-400 border border-white/5 shadow-lg hover:bg-slate-800 transition-all transform active:scale-90" title="ແກ້ໄຂຂໍ້ມູນ">
                   <Edit2 className="size-4" />
                 </button>

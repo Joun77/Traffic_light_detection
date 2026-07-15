@@ -307,7 +307,7 @@ export default function CameraDetailPage() {
                 onClick={() => router.push(`/monitor?camera=${camera.id}`)}
                 className="flex items-center justify-center gap-2 w-full py-4 bg-slate-900 border border-white/5 hover:bg-slate-800 text-emerald-400 rounded-2xl font-black text-xs uppercase tracking-widest active:scale-95 transition-all"
               >
-                <Activity className="size-4" /> ເລີ່ມການกວດຈັບສົດ
+                <Activity className="size-4" /> ເລີ່ມການກວດຈັບສົດ
               </button>
             )}
           </div>

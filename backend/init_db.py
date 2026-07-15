@@ -3,7 +3,7 @@ import time
 import os
 
 def init_database():
-    print("--- กำลังเตรียมระบบฐานข้อมูล ---")
+    print("--- ກຳລັງກຽມລະບົບຖານຂໍ້ມູນ ---")
     retries = 5
     
     db_host = os.getenv("DB_HOST", "localhost")
@@ -14,7 +14,7 @@ def init_database():
 
     while retries > 0:
         try:
-            # เชื่อมต่อฐานข้อมูล
+            # ເຊື່ອມຕໍ່ຖານຂໍ້ມູນ
             conn = psycopg2.connect(
                 host=db_host,
                 database=db_name,
@@ -24,7 +24,7 @@ def init_database():
             )
             cur = conn.cursor()
 
-            # สร้างตาราง cameras (กล้องวงจรปิด)
+            # ສ້າງຕາຕະລາງ cameras (ກ້ອງວົງຈອນປິດຕາມສະຖານທີ່)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS cameras (
                     id SERIAL PRIMARY KEY,
@@ -39,7 +39,7 @@ def init_database():
                 );
             """)
 
-            # สร้างตาราง violations พร้อมลิงก์กับ cameras
+            # ສ້າງຕาຕະລາງ violations ພ້ອມລິ້ງກັບ cameras
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS violations (
                     id SERIAL PRIMARY KEY,
@@ -53,7 +53,7 @@ def init_database():
                 );
             """)
 
-            # 🛠️ Migrations: เพิ่มคอลัมน์ที่อาจยังไม่มีในตารางเก่า
+            # 🛠️ Migrations: ເພີ່ມຄໍລຳນ໌ທີ່ອາດຈະຍັງບໍ່ມີໃນຕາຕະລາງເກົ່າ
             cur.execute("""
                 DO $$
                 BEGIN
@@ -73,13 +73,13 @@ def init_database():
                 $$;
             """)
 
-            # เพิ่มข้อมูลตัวอย่างกล้อง (ถ้ายังไม่มี)
+            # ເພີ່ມຂໍ້ມູນຕົວຢ່າງກ້ອງ (ຖ້າຍັງບໍ່ມີ)
             cur.execute("SELECT COUNT(*) FROM cameras")
             if cur.fetchone()[0] == 0:
                 sample_cameras = [
-                    ('CAM-001', 'สี่แยกประตูไซ', 'เวียงจันทน์', 'จันทะบูลี', 'นครหลวงเวียงจันทน์', True),
-                    ('CAM-002', 'สี่แยกธาตุหลวง', 'ธาตุหลวง', 'ไซเสดถา', 'นครหลวงเวียงจันทน์', True),
-                    ('CAM-003', 'สามแยกดงโดก', 'ดงโดก', 'ไซทานี', 'นครหลวงเวียงจันทน์', False),
+                    ('CAM-001', 'ສີ່ແຍກປະຕູໄຊ', 'ວຽງຈັນ', 'ຈັນທະບູລີ', 'ນະຄອນຫຼວງວຽງຈັນ', True),
+                    ('CAM-002', 'ສີ່ແຍກທາດຫຼວງ', 'ທາດຫຼວງ', 'ໄຊເສດຖາ', 'ນະຄອນຫຼວງວຽງຈັນ', True),
+                    ('CAM-003', 'ສາມແຍກດົງໂດກ', 'ດົງໂດກ', 'ໄຊທານີ', 'ນະຄອນຫຼວງວຽງຈັນ', False),
                 ]
                 for cam in sample_cameras:
                     cur.execute("""
@@ -88,17 +88,17 @@ def init_database():
                     """, cam)
             
             conn.commit()
-            print("✅ เตรียมตาราง violations และ cameras สำเร็จ!")
+            print("✅ ກຽມຕາຕະລາງ violations ແລະ cameras ສຳເລັດ!")
             
             cur.close()
             conn.close()
             break
         except Exception as e:
-            print(f"⌛ กำลังรอฐานข้อมูลพร้อมใช้งาน... ({retries})")
+            print(f"⌛ ກຳລັງລໍຖ້າຖານຂໍ້ມູນພ້ອມໃຊ້ງານ... ({retries})")
             time.sleep(3)
             retries -= 1
             if retries == 0:
-                print(f"❌ ไม่สามารถเชื่อมต่อฐานข้อมูลได้: {e}")
+                print(f"❌ ບໍ່ສາມາດເຊື່ອມຕໍ່ຖານຂໍ້ມູນໄດ້: {e}")
 
 if __name__ == "__main__":
     init_database()

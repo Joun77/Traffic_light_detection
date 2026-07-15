@@ -271,7 +271,7 @@ export const ViolationReportPrint = React.forwardRef<HTMLDivElement, ViolationRe
           </div>
 
           <div className="print-warning-box">
-            <div className="print-warn-title">⚠ ຂໍ້ຄວນຮູ້ ແລະ ລະບຽบການ ⚠</div>
+            <div className="print-warn-title">⚠ ຂໍ້ຄວນຮູ້ ແລະ ລະບຽບການ ⚠</div>
             <ul>
               <li>ໃບແຈ້ງໂທດສະບັບນີ້ ອ້າງອີງຈາກຫຼັກຖານຮູບພາບທີ່ໄດ້ຮັບການບັນທຶກໂດຍລະບົບ AI Monitoring</li>
               <li>ກະລຸນານຳໃບແຈ້ງໂທດນີ້ ໄປຊຳລະຄ່າປັບໃໝ ທີ່ກົມຕຳຫຼວດຈະລາຈອນ ພາຍໃນ 15 ວັນ</li>
