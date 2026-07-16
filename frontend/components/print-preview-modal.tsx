@@ -11,6 +11,9 @@ export interface Violation {
   time_stamp: string
   light_status: string
   image_path: string
+  crop_image_path?: string
+  context_image_path?: string
+  plate_image_path?: string
   video_path: string
 }
 

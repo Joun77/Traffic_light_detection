@@ -6,28 +6,27 @@ import { RealTimeClock } from "@/components/real-time-clock"
 import {
   Calendar,
   AlarmClock,
-  BookOpen,
-  BarChart3,
   Video,
-  Car,
-  CalendarDays,
-  Clock,
-  ChevronDown,
-  Maximize2,
-  Play,
-  X,
-  Eye,
-  Activity,
   ShieldAlert,
-  Printer
+  BarChart3,
+  ChevronDown,
+  MapPin,
+  ExternalLink,
+  ArrowRight,
+  TrendingUp,
+  Activity,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { translateLightStatus, translateVehicleType, getLightStatusColor } from "@/lib/localization"
 import { DataTable, DataTableRow, DataTableCell } from "@/components/ui/data-table"
-import { PrintPreviewModal, Violation as ViolationType } from "@/components/print-preview-modal"
+import Link from "next/link"
 
 interface CCTV {
   id: number
+  camera_id: string
+  location_name: string
+  village: string
+  district: string
+  province: string
   is_active: boolean
 }
 
@@ -37,17 +36,7 @@ interface SummaryData {
   daily_stats: { date: string; count: number }[]
 }
 
-interface Violation {
-  id: number
-  vehicle_id: number
-  vehicle_type: string
-  time_stamp: string
-  image_path: string
-  video_path: string
-  light_status: string
-}
-
-function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+function SmallCard({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
     <div className={`rounded-2xl bg-card p-5 text-card-foreground shadow-sm border border-border ${className}`}>
       {children}
@@ -55,46 +44,59 @@ function Card({ children, className = "" }: { children: React.ReactNode; classNa
   )
 }
 
+function SummaryBlock({
+  label,
+  value,
+  sublabel,
+  icon: Icon,
+  colorClass,
+}: {
+  label: string
+  value: number | string
+  sublabel?: string
+  icon: React.ElementType
+  colorClass: string
+}) {
+  return (
+    <div className={cn("rounded-2xl p-5 border flex flex-col gap-3", colorClass)}>
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] font-black uppercase tracking-widest opacity-70">{label}</span>
+        <Icon className="size-5 opacity-50" />
+      </div>
+      <p className="text-4xl font-black tracking-tighter">{value}</p>
+      {sublabel && (
+        <p className="text-[10px] font-bold opacity-60 uppercase tracking-wider">{sublabel}</p>
+      )}
+    </div>
+  )
+}
+
+type FilterPeriod = "week" | "month"
+
 export default function HomePage() {
+  const [summaryWeek, setSummaryWeek] = useState<SummaryData | null>(null)
+  const [summaryMonth, setSummaryMonth] = useState<SummaryData | null>(null)
   const [summaryAll, setSummaryAll] = useState<SummaryData | null>(null)
-  const [summaryToday, setSummaryToday] = useState<SummaryData | null>(null)
-  const [recentViolations, setViolations] = useState<Violation[]>([])
   const [cameras, setCameras] = useState<CCTV[]>([])
   const [loading, setLoading] = useState(true)
-  const [selectedImage, setSelectedImage] = useState<string | null>(null)
-  const [selectedVideo, setSelectedVideo] = useState<string | null>(null)
-  const [previewViolation, setPreviewViolation] = useState<ViolationType | null>(null)
-
-  // Period Filter State
-  const [period, setPeriod] = useState<7 | 30>(7)
+  const [filterPeriod, setFilterPeriod] = useState<FilterPeriod>("week")
   const [isFilterOpen, setIsFilterOpen] = useState(false)
 
   const fetchData = async () => {
     setLoading(true)
     try {
-      const [sumAllRes, sumDayRes, recentRes, camRes] = await Promise.all([
+      const [wRes, mRes, aRes, camRes] = await Promise.all([
+        fetch("http://localhost:8000/violation-summary?period=week"),
+        fetch("http://localhost:8000/violation-summary?period=month"),
         fetch("http://localhost:8000/violation-summary?period=all"),
-        fetch("http://localhost:8000/violation-summary?period=day"),
-        fetch("http://localhost:8000/violations?limit=10"),
-        fetch("http://localhost:8000/cameras")
+        fetch("http://localhost:8000/cameras"),
       ])
-      if (sumAllRes.ok) setSummaryAll(await sumAllRes.json())
-      if (sumDayRes.ok) setSummaryToday(await sumDayRes.json())
-      
-      if (recentRes.ok) {
-        const data = await recentRes.json()
-        if (Array.isArray(data)) {
-          setViolations(data)
-        } else {
-          console.error("Home: API returned non-array data:", data)
-          setViolations([])
-        }
-      }
-
+      if (wRes.ok) setSummaryWeek(await wRes.json())
+      if (mRes.ok) setSummaryMonth(await mRes.json())
+      if (aRes.ok) setSummaryAll(await aRes.json())
       if (camRes.ok) setCameras(await camRes.json())
     } catch (err) {
       console.error("Dashboard fetch error:", err)
-      setViolations([])
     } finally {
       setLoading(false)
     }
@@ -104,249 +106,193 @@ export default function HomePage() {
     fetchData()
   }, [])
 
-  const activeCamerasCount = cameras.filter(c => c.is_active).length
+  const activeCamerasCount = cameras.filter((c) => c.is_active).length
+  const currentSummary = filterPeriod === "week" ? summaryWeek : summaryMonth
+  const periodDays = filterPeriod === "week" ? 7 : 30
+  const avgPerDay = currentSummary
+    ? Math.round(currentSummary.total_violations / periodDays)
+    : 0
 
-  const statusRows = [
-    { label: "ລາຍການລົດລ່ວງໄຟແດງໂດຍລວມທັງໝົດ", value: summaryAll?.total_violations || 0, color: "bg-rose-500 text-white" },
-    { label: "ລາຍການລົດລ່ວงໄຟແດງພາຍໃນມື້ນີ້", value: summaryToday?.total_violations || 0, color: "bg-emerald-500 text-white" },
+  const summaryBlocks = [
+    {
+      label: filterPeriod === "week" ? "ການລະເມີດ (ອາທິດນີ້)" : "ການລະເມີດ (ເດືອນນີ້)",
+      value: currentSummary?.total_violations ?? 0,
+      sublabel: `ສະເລ່ຍ ${avgPerDay} ຄັ້ງ / ວັນ`,
+      icon: ShieldAlert,
+      colorClass: "bg-rose-500/10 border-rose-500/20 text-rose-400",
+    },
+    {
+      label: "ການລະເມີດທັງໝົດ",
+      value: summaryAll?.total_violations ?? 0,
+      sublabel: "ນັບຕັ້ງແຕ່ເລີ່ມລະບົບ",
+      icon: BarChart3,
+      colorClass: "bg-amber-500/10 border-amber-500/20 text-amber-400",
+    },
+    {
+      label: "ກ້ອງທີ່ໃຊ້ງານ",
+      value: activeCamerasCount,
+      sublabel: `ຈາກທັງໝົດ ${cameras.length} ກ້ອງ`,
+      icon: Video,
+      colorClass: "bg-emerald-500/10 border-emerald-500/20 text-emerald-400",
+    },
+    {
+      label: "ກ້ອງທັງໝົດ",
+      value: cameras.length,
+      sublabel: `ປິດໃຊ້ງານ ${cameras.length - activeCamerasCount} ກ້ອງ`,
+      icon: TrendingUp,
+      colorClass: "bg-sky-500/10 border-sky-500/20 text-sky-400",
+    },
   ]
 
   return (
     <DashboardShell title="ພາບລວມທັງໝົດ">
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        {/* Status list card */}
-        <Card className="p-0 overflow-hidden">
-          <div className="flex items-center justify-between border-b border-white/5 px-5 py-4 bg-panel/50">
-            <h2 className="text-lg font-black tracking-tight text-white uppercase tracking-tighter">ສະຫຼຸບ ແລະ ລາຍງານ</h2>
-            <div className="relative">
-               <button 
-                onClick={() => setIsFilterOpen(!isFilterOpen)}
-                className="flex items-center gap-1 text-xs font-black text-sky-400 bg-sky-500/10 px-3 py-1.5 rounded-lg border border-sky-500/20 uppercase tracking-widest"
-               >
-                  <span>{period === 7 ? "7 ມື້ຫຼ້າສຸດ" : "30 ມື้ຫຼ້າສຸດ"}</span>
-                  <ChevronDown className={cn("size-3 transition-transform", isFilterOpen && "rotate-180")} />
-               </button>
-               {isFilterOpen && (
-                 <div className="absolute top-full right-0 mt-1 w-32 bg-slate-900 border border-white/10 rounded-xl shadow-xl z-50 overflow-hidden">
-                    <button onClick={() => { setPeriod(7); setIsFilterOpen(false); }} className="w-full text-left px-4 py-2 text-xs font-bold hover:bg-white/5 text-slate-300">7 ມື້ຫຼ້າສຸດ</button>
-                    <button onClick={() => { setPeriod(30); setIsFilterOpen(false); }} className="w-full text-left px-4 py-2 text-xs font-bold hover:bg-white/5 text-slate-300">30 ມື້ຫຼ້າສຸດ</button>
-                 </div>
-               )}
-            </div>
-          </div>
-          <ul>
-            {statusRows.map((row, i) => (
-              <li
-                key={row.label}
-                className={`flex items-center justify-between px-5 py-5 ${
-                  i !== statusRows.length - 1 ? "border-b border-white/5" : ""
-                }`}
+
+      {/* ─── Period Filter ─────────────────────────────────── */}
+      <div className="flex items-center justify-between mb-5">
+        <div className="flex items-center gap-2 text-slate-400">
+          <Activity className="size-4 text-sky-400" />
+          <span className="text-[10px] font-black uppercase tracking-widest">ສະຫຼຸບລາຍງານ</span>
+        </div>
+        <div className="relative">
+          <button
+            onClick={() => setIsFilterOpen((v) => !v)}
+            className="flex items-center gap-2 text-xs font-black text-sky-400 bg-sky-500/10 px-4 py-2 rounded-xl border border-sky-500/20 uppercase tracking-widest"
+          >
+            <span>{filterPeriod === "week" ? "ລາຍອາທິດ (7 ວັນ)" : "ລາຍເດືອນ (30 ວັນ)"}</span>
+            <ChevronDown className={cn("size-3 transition-transform", isFilterOpen && "rotate-180")} />
+          </button>
+          {isFilterOpen && (
+            <div className="absolute top-full right-0 mt-1 w-44 bg-slate-900 border border-white/10 rounded-xl shadow-xl z-50 overflow-hidden">
+              <button
+                onClick={() => { setFilterPeriod("week"); setIsFilterOpen(false) }}
+                className={cn("w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-white/5 text-slate-300", filterPeriod === "week" && "text-sky-400 bg-sky-500/5")}
               >
-                <span className="text-sm font-bold text-slate-300">{row.label}</span>
-                <span className={`min-w-16 rounded-xl px-4 py-1.5 text-center text-sm font-black shadow-lg ${row.color}`}>
-                  {row.value}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </Card>
-
-        {/* Right column */}
-        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-          <Card>
-            <div className="flex items-center gap-2 text-slate-400">
-              <Calendar className="size-6 text-sky-400" aria-hidden="true" />
-              <span className="text-[10px] font-black uppercase tracking-widest">ວັນທີ/ເດືອນ/ປີ</span>
+                ລາຍອາທິດ (7 ວັນ)
+              </button>
+              <button
+                onClick={() => { setFilterPeriod("month"); setIsFilterOpen(false) }}
+                className={cn("w-full text-left px-4 py-2.5 text-xs font-bold hover:bg-white/5 text-slate-300", filterPeriod === "month" && "text-sky-400 bg-sky-500/5")}
+              >
+                ລາຍເດືອນ (30 ວັນ)
+              </button>
             </div>
-            <p className="mt-6 text-3xl font-black text-white tracking-tighter">
-              <RealTimeClock type="date" />
-            </p>
-          </Card>
-
-          <Card>
-            <div className="flex items-center gap-2 text-slate-400">
-              <AlarmClock className="size-6 text-sky-400" aria-hidden="true" />
-              <span className="text-[10px] font-black uppercase tracking-widest">ເວລາ</span>
-            </div>
-            <p className="mt-6 text-3xl font-black text-white tracking-tighter">
-              <RealTimeClock type="time" />
-            </p>
-          </Card>
-
-          <Card>
-            <div className="flex items-center gap-2 text-slate-400">
-              <BookOpen className="size-6 text-sky-400" aria-hidden="true" />
-              <span className="text-[10px] font-black uppercase tracking-widest">ຈຸດຕິດຕັ້ງກ້ອງ</span>
-            </div>
-            <p className="mt-4 flex items-center gap-2 text-3xl font-black text-white tracking-tighter">
-              {cameras.length} <Video className="size-6 text-slate-500" aria-hidden="true" />
-            </p>
-            <div className="mt-4 space-y-1 text-sm border-t border-white/5 pt-4">
-              <div className="flex justify-between">
-                <span className="text-slate-400 font-bold">ກຳລັງເຮັດວຽກ</span>
-                <span className="font-black text-emerald-400">{activeCamerasCount} ກ້ອງ</span>
-              </div>
-            </div>
-          </Card>
-
-          <Card>
-            <div className="flex items-center gap-2 text-slate-400">
-              <BarChart3 className="size-6 text-sky-400" aria-hidden="true" />
-              <span className="text-[10px] font-black uppercase tracking-widest">{period} ມື້ຫຼ້າສຸດ</span>
-            </div>
-            <p className="mt-4 flex items-center gap-2 text-3xl font-black text-white tracking-tighter">
-              { (summaryAll?.daily_stats || []).slice(-period).reduce((acc, curr) => acc + curr.count, 0) || 0} <Car className="size-6 text-slate-500" aria-hidden="true" />
-            </p>
-            <div className="mt-4 flex justify-between text-sm border-t border-white/5 pt-4">
-              <span className="text-slate-400 font-bold">ສະເລ່ย/ວັນ</span>
-              <span className="font-black text-white">
-                {Math.round(((summaryAll?.daily_stats || []).slice(-period).reduce((acc, curr) => acc + curr.count, 0) || 0) / period)}
-              </span>
-            </div>
-          </Card>
+          )}
         </div>
       </div>
 
-      {/* Records table */}
-      <section className="mt-12">
-        <div className="flex items-center justify-between px-4 mb-4">
-          <div className="flex items-center gap-3">
-             <ShieldAlert className="size-6 text-sky-400" />
-             <h2 className="text-xl font-black text-white uppercase tracking-tighter">ຂໍ້ມູນຂອງລົດລ່ວງໄຟແດງ (ຫຼ້າສຸດ)</h2>
+      {/* ─── Summary Blocks ────────────────────────────────── */}
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4 mb-6">
+        {summaryBlocks.map((block) => (
+          <SummaryBlock key={block.label} {...block} />
+        ))}
+      </div>
+
+      {/* ─── Date / Time ───────────────────────────────────── */}
+      <div className="grid grid-cols-2 gap-4 mb-10">
+        <SmallCard>
+          <div className="flex items-center gap-2 text-slate-400">
+            <Calendar className="size-5 text-sky-400" />
+            <span className="text-[10px] font-black uppercase tracking-widest">ວັນທີ / ເດືອນ / ປີ</span>
           </div>
-          <a href="/data" className="px-5 py-2 bg-sky-500/10 text-sky-400 border border-sky-500/20 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-sky-500 hover:text-white transition-all shadow-lg shadow-sky-500/5">ເບິ່ງທັງໝົດ</a>
+          <p className="mt-4 text-2xl font-black text-white tracking-tighter">
+            <RealTimeClock type="date" />
+          </p>
+        </SmallCard>
+        <SmallCard>
+          <div className="flex items-center gap-2 text-slate-400">
+            <AlarmClock className="size-5 text-sky-400" />
+            <span className="text-[10px] font-black uppercase tracking-widest">ເວລາ</span>
+          </div>
+          <p className="mt-4 text-2xl font-black text-white tracking-tighter">
+            <RealTimeClock type="time" />
+          </p>
+        </SmallCard>
+      </div>
+
+      {/* ─── Camera Table ──────────────────────────────────── */}
+      <section>
+        <div className="flex items-center justify-between px-1 mb-4">
+          <div className="flex items-center gap-3">
+            <Video className="size-5 text-sky-400" />
+            <h2 className="text-lg font-black text-white uppercase tracking-tighter">
+              ລາຍການທັງໝົດ — ກ້ອງ CCTV
+            </h2>
+          </div>
+          <Link
+            href="/cameras"
+            className="flex items-center gap-1.5 px-4 py-2 bg-sky-500/10 text-sky-400 border border-sky-500/20 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-sky-500 hover:text-white transition-all shadow-lg shadow-sky-500/5"
+          >
+            ຈັດການກ້ອງທັງໝົດ <ArrowRight className="size-3" />
+          </Link>
         </div>
-        
-        <DataTable 
-          headers={["ລຳດັບ", "ໄອດີ", "ປະເພດລົດ", "ວັນທີ/ເວລາ", "ສະຖານະ", "ຮູບພາບຫຼັກຖານ", "ວິດີໂອຫຼັກຖານ", "ຈັດການ"]}
+
+        <DataTable
+          headers={["ລຳດັບ", "Camera ID", "ສະຖານທີ່ຕິດຕັ້ງ", "ສະຖານະ", "ຈັດການ"]}
           loading={loading}
-          columnCount={8}
+          columnCount={5}
         >
-          {recentViolations.map((v, i) => (
-            <DataTableRow key={v.id}>
-              <DataTableCell className="font-bold text-slate-500">#{i + 1}</DataTableCell>
-              <DataTableCell className="font-mono font-black text-white tracking-tighter uppercase text-base">VkH-{v.vehicle_id}</DataTableCell>
-              <DataTableCell>
-                  <span className="px-3 py-1 rounded-lg bg-sky-500/10 text-sky-400 font-black text-[10px] uppercase border border-sky-500/20">
-                    {translateVehicleType(v.vehicle_type)}
-                  </span>
+          {cameras.map((cam, index) => (
+            <DataTableRow key={cam.id}>
+
+              {/* ລຳດັບ */}
+              <DataTableCell className="font-black text-sky-500 text-lg">
+                #{index + 1}
               </DataTableCell>
-              <DataTableCell>
-                <div className="flex flex-col gap-0.5">
-                  <span className="flex items-center justify-center gap-1.5 text-[10px] font-bold text-slate-400 uppercase opacity-70"><CalendarDays className="size-3 text-sky-500" /> {new Date(v.time_stamp).toLocaleDateString('lo-LA')}</span>
-                  <span className="flex items-center justify-center gap-1.5 text-xs font-black text-white"><Clock className="size-3 text-sky-500" /> {new Date(v.time_stamp).toLocaleTimeString('lo-LA')}</span>
+
+              {/* Camera ID */}
+              <DataTableCell className="font-mono font-black text-white tracking-tighter uppercase">
+                CCTV-{cam.camera_id}
+              </DataTableCell>
+
+              {/* ສະຖານທີ່ */}
+              <DataTableCell align="left">
+                <div className="flex flex-col gap-1">
+                  <span className="font-black text-sm text-white uppercase tracking-tight">
+                    {cam.location_name}
+                  </span>
+                  <span className="text-[10px] text-slate-400 font-bold flex items-center gap-1.5 uppercase opacity-70">
+                    <MapPin className="size-3 text-rose-500" />
+                    {cam.village}, {cam.district}, {cam.province}
+                  </span>
                 </div>
               </DataTableCell>
+
+              {/* ສະຖານະ */}
               <DataTableCell>
-                <span className={cn("inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full font-black text-[10px] border uppercase shadow-sm", getLightStatusColor(v.light_status))}>
-                  <div className={cn("size-1.5 rounded-full animate-pulse", v.light_status.toLowerCase() === 'red' ? 'bg-rose-500' : v.light_status.toLowerCase() === 'green' ? 'bg-emerald-500' : 'bg-slate-400')} />
-                  {translateLightStatus(v.light_status)}
+                <span
+                  className={cn(
+                    "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full font-black text-[10px] border uppercase tracking-wider",
+                    cam.is_active
+                      ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                      : "bg-slate-500/10 text-slate-400 border-slate-500/20"
+                  )}
+                >
+                  <div
+                    className={cn(
+                      "size-1.5 rounded-full",
+                      cam.is_active ? "bg-emerald-400 animate-pulse" : "bg-slate-500"
+                    )}
+                  />
+                  {cam.is_active ? "ໃຊ້ງານ" : "ປິດໃຊ້ງານ"}
                 </span>
               </DataTableCell>
-              <DataTableCell>
-                <div className="relative group cursor-pointer overflow-hidden rounded-xl border border-white/10 w-28 h-16 shadow-lg mx-auto" onClick={() => setSelectedImage(`http://localhost:8000/${v.image_path}`)}>
-                  <img 
-                    src={`http://localhost:8000/${v.image_path}`} 
-                    alt="Violation Evidence" 
-                    className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
-                  />
-                  <div className="absolute inset-0 bg-sky-500/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                    <Maximize2 className="size-4 text-white drop-shadow-md" />
-                  </div>
-                </div>
-              </DataTableCell>
-              <DataTableCell>
-                <div 
-                  className="relative group cursor-pointer overflow-hidden rounded-xl border border-white/10 w-28 h-16 shadow-lg mx-auto transition-all active:scale-95" 
-                  onClick={() => setSelectedVideo(`http://localhost:8000/${v.video_path}`)}
-                >
-                  <img 
-                    src={`http://localhost:8000/${v.image_path}`} 
-                    alt="Video Cover" 
-                    className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500 opacity-60"
-                  />
-                  <div className="absolute inset-0 bg-black/20 group-hover:bg-black/10 transition-colors flex items-center justify-center">
-                      <div className="p-1.5 bg-white/20 backdrop-blur-sm rounded-full border border-white/30 group-hover:scale-110 transition-transform shadow-xl">
-                        <Play className="size-4 text-white fill-current" />
-                      </div>
-                  </div>
-                </div>
-              </DataTableCell>
+
+              {/* ຈັດການ */}
               <DataTableCell align="center">
-                  <button 
-                    onClick={() => setPreviewViolation(v as unknown as ViolationType)}
-                    className="p-3 bg-slate-800 hover:bg-sky-500 text-sky-400 hover:text-white rounded-xl transition-all shadow-lg border border-white/5 active:scale-90"
-                    title="ພິມລາຍງານ"
-                  >
-                    <Printer className="size-5" />
-                  </button>
+                <Link
+                  href={`/monitor?camera=${cam.id}`}
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-sky-500/10 text-sky-400 border border-sky-500/20 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-sky-500 hover:text-white transition-all active:scale-95 shadow-lg shadow-sky-500/5"
+                  title={`ເບິ່ງການຕິດຕາມ CCTV-${cam.camera_id}`}
+                >
+                  <ExternalLink className="size-3.5" />
+                  ຕິດຕາມ
+                </Link>
               </DataTableCell>
+
             </DataTableRow>
           ))}
         </DataTable>
       </section>
-
-      {/* Image Preview Modal */}
-      {selectedImage && (
-        <div 
-          className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/95 p-6 backdrop-blur-md animate-in fade-in duration-300"
-          onClick={() => setSelectedImage(null)}
-        >
-          <div className="relative max-w-5xl w-full bg-slate-900 rounded-[3rem] overflow-hidden shadow-2xl border border-white/10" onClick={e => e.stopPropagation()}>
-            <div className="p-8 border-b border-white/5 flex justify-between items-center bg-slate-900/50">
-              <div className="flex items-center gap-4 text-sky-400">
-                 <div className="p-3 bg-sky-500/10 rounded-2xl"><Eye className="size-6" /></div>
-                 <h3 className="font-black text-2xl uppercase tracking-tighter text-white">Full Evidence View</h3>
-              </div>
-              <button 
-                onClick={() => setSelectedImage(null)}
-                className="p-3 bg-white/5 hover:bg-rose-500/20 rounded-full transition-colors text-white/50 hover:text-rose-500"
-              >
-                <X className="size-6" />
-              </button>
-            </div>
-            <div className="bg-black p-4 text-center">
-               <img src={selectedImage} alt="Violation Full Evidence" className="inline-block h-auto max-h-[75vh] object-contain rounded-2xl mx-auto shadow-2xl" />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Video Playback Modal */}
-      {selectedVideo && (
-        <div 
-          className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/98 p-6 backdrop-blur-3xl animate-in fade-in duration-300"
-          onClick={() => setSelectedVideo(null)}
-        >
-          <div className="relative max-w-5xl w-full bg-slate-900 rounded-[3rem] overflow-hidden shadow-2xl border border-white/10" onClick={e => e.stopPropagation()}>
-            <div className="p-8 border-b border-white/5 flex justify-between items-center bg-slate-900/50 text-white">
-              <div className="flex items-center gap-4 text-emerald-400">
-                 <div className="p-3 bg-emerald-500/10 rounded-2xl"><Play className="size-6 fill-current" /></div>
-                 <h3 className="font-black text-2xl uppercase tracking-tighter">Evidence Video Playback</h3>
-              </div>
-              <button 
-                onClick={() => setSelectedVideo(null)}
-                className="p-3 bg-white/5 hover:bg-rose-500/20 rounded-full transition-colors text-white/50 hover:text-rose-500"
-              >
-                <X className="size-6" />
-              </button>
-            </div>
-            <div className="bg-black p-4 aspect-video flex items-center justify-center">
-               <video 
-                  src={selectedVideo} 
-                  controls 
-                  autoPlay 
-                  className="w-full h-full max-h-[70vh] rounded-2xl shadow-2xl"
-               />
-            </div>
-          </div>
-        </div>
-      )}
-
-      <PrintPreviewModal 
-        violation={previewViolation} 
-        onClose={() => setPreviewViolation(null)} 
-      />
 
     </DashboardShell>
   )

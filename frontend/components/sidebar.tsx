@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import { Car, Home, Layers, Activity, Camera, Target, Settings, LogOut, ChevronLeft, Menu } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -11,7 +11,6 @@ const navItems = [
   { href: "/cameras", label: "ຈັດການກ້ອງ", icon: Camera },
   { href: "/data", label: "ປະຫວັດການລະເມີດ", icon: Layers },
   { href: "/upload-roi", label: "ຕັ້ງຄ່າພື້ນທີ່ກວດຈັບ", icon: Target },
-  { href: "/settings", label: "ຕັ້ງຄ່າລະບົບ", icon: Settings },
 ]
 
 interface SidebarProps {
@@ -21,6 +20,13 @@ interface SidebarProps {
 
 export function Sidebar({ isCollapsed, setIsCollapsed }: SidebarProps) {
   const pathname = usePathname()
+  const router = useRouter()
+
+  const handleLogout = () => {
+    localStorage.removeItem("auth_user")
+    sessionStorage.removeItem("auth_user")
+    router.push("/login")
+  }
 
   return (
     <aside 
@@ -87,6 +93,7 @@ export function Sidebar({ isCollapsed, setIsCollapsed }: SidebarProps) {
       <div className="mt-auto px-3 pb-8 pt-10" suppressHydrationWarning>
         <button
           type="button"
+          onClick={handleLogout}
           className={cn(
             "flex items-center gap-3 rounded-2xl text-panel-foreground/60 transition-all hover:text-rose-400 hover:bg-rose-500/5 w-full",
             isCollapsed ? "justify-center py-3 px-0" : "px-5 py-3"

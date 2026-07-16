@@ -3,30 +3,30 @@
   "roi_x": null,
   "stop_line": [
     [
-      21,
-      3034
+      42,
+      775
     ],
     [
-      1715,
-      2015
+      447,
+      560
     ]
   ],
   "roi_x_line": null,
   "lane_polygons": null,
   "traffic_light_box": [
-    0,
-    504,
-    2128,
-    1363
+    27,
+    108,
+    572,
+    337
   ],
   "vehicle_zone": [
-    37,
-    2009,
-    2128,
-    3739
+    33,
+    528,
+    569,
+    1047
   ],
   "scale": 1.0,
   "video_path": null,
-  "camera_id": null,
+  "camera_id": 2,
   "has_reference": null
 }

@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import shutil
 import subprocess
@@ -84,6 +85,9 @@ ai_process = None
 class ROIConfig(BaseModel):
     roi_y: Optional[int] = None
     roi_x: Optional[int] = None
+    stop_line: Optional[List[List[int]]] = None          # [[x1,y1],[x2,y2]] from Y tool
+    roi_x_line: Optional[List[List[int]]] = None         # [[x1,y1],[x2,y2]] from X tool
+    lane_polygons: Optional[List[List[List[int]]]] = None # [[[x,y],...], ...] from LANE tool
     traffic_light_box: Optional[List[int]] = None
     vehicle_zone: Optional[List[int]] = None
     scale: Optional[float] = 1.0
@@ -96,6 +100,9 @@ class ViolationReport(BaseModel):
     vehicle_type: str
     light_status: str
     image_path: str
+    crop_image_path: Optional[str] = None     # tight vehicle crop for LPR
+    context_image_path: Optional[str] = None  # vehicle + traffic light merged region
+    plate_image_path: Optional[str] = None    # license plate zone, 2× upscaled
     video_path: str
     camera_id: Optional[int] = None
 
@@ -105,6 +112,22 @@ class CameraUpdate(BaseModel):
     district: Optional[str] = None
     province: Optional[str] = None
     is_active: Optional[bool] = None
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+# --- 🔐 Login Endpoint ---
+
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin1234")
+
+@app.post("/login")
+async def login(data: LoginRequest):
+    if data.username == ADMIN_USERNAME and data.password == ADMIN_PASSWORD:
+        return {"success": True, "username": data.username}
+    from fastapi import HTTPException
+    raise HTTPException(status_code=401, detail="ຊື່ຜູ້ໃຊ້ ຫຼື ລະຫັດຜ່ານບໍ່ຖືກຕ້ອງ")
 
 # --- 🚦 Light Status Endpoint ---
 
@@ -133,11 +156,17 @@ async def add_violation(report: ViolationReport):
         conn = psycopg2.connect(**DB_CONFIG)
         cur = conn.cursor(cursor_factory=RealDictCursor)
         
-        # Explicitly list columns for safety
         cur.execute("""
-            INSERT INTO violations (vehicle_id, vehicle_type, light_status, image_path, video_path, camera_id)
-            VALUES (%s, %s, %s, %s, %s, %s) RETURNING id
-        """, (report.vehicle_id, report.vehicle_type, report.light_status, report.image_path, report.video_path, report.camera_id))
+            INSERT INTO violations
+                (vehicle_id, vehicle_type, light_status, image_path, crop_image_path,
+                 context_image_path, plate_image_path, video_path, camera_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id
+        """, (
+            report.vehicle_id, report.vehicle_type, report.light_status,
+            report.image_path, report.crop_image_path,
+            report.context_image_path, report.plate_image_path,
+            report.video_path, report.camera_id,
+        ))
         new_row = cur.fetchone()
         conn.commit()
         
@@ -161,25 +190,45 @@ async def add_violation(report: ViolationReport):
 
 
 @app.get("/violations")
-async def get_violations(limit: int = 10):
+async def get_violations(limit: int = 100, camera_id: Optional[int] = None, start_date: Optional[str] = None, end_date: Optional[str] = None):
     try:
         conn = psycopg2.connect(**DB_CONFIG)
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        # Verify if camera_id exists before joining (Safety Fallback)
+        
+        # Build dynamic WHERE clauses
+        where_clauses = []
+        params = []
+        
+        if camera_id is not None:
+            where_clauses.append("v.camera_id = %s")
+            params.append(camera_id)
+            
+        if start_date:
+            where_clauses.append("v.time_stamp >= %s")
+            params.append(f"{start_date} 00:00:00")
+            
+        if end_date:
+            where_clauses.append("v.time_stamp <= %s")
+            params.append(f"{end_date} 23:59:59")
+            
+        where = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+        
         cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'violations' AND column_name = 'camera_id'")
         has_cam_id = cur.fetchone()
-        
+
         if has_cam_id:
-            query = """
-                SELECT v.*, c.location_name, c.village, c.district, c.province 
+            query = f"""
+                SELECT v.*, c.location_name, c.village, c.district, c.province
                 FROM violations v
                 LEFT JOIN cameras c ON v.camera_id = c.id
+                {where}
                 ORDER BY v.time_stamp DESC LIMIT %s
             """
         else:
-            query = "SELECT * FROM violations ORDER BY time_stamp DESC LIMIT %s"
+            query = f"SELECT v.* FROM violations v {where} ORDER BY v.time_stamp DESC LIMIT %s"
             
-        cur.execute(query, (limit,))
+        params.append(limit)
+        cur.execute(query, tuple(params))
         rows = cur.fetchall()
         cur.close(); conn.close()
         return [dict(row) for row in rows]
@@ -246,22 +295,36 @@ async def delete_all_violations():
 
 def convert_video_task(camera_db_id: int, temp_path: str, output_path: str, output_filename: str):
     try:
-        cap = cv2.VideoCapture(temp_path)
-        w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-        out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'avc1'), fps, (w, h))
-        if not out.isOpened(): out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret: break
-            out.write(frame)
-        cap.release(); out.release()
+        try:
+            from vidstab import VidStab
+            stabilizer = VidStab()
+            stabilizer.stabilize(
+                input_path=temp_path,
+                output_path=output_path,
+                smoothing_window=30,
+                output_fourcc='avc1',
+            )
+            logger.info(f"✅ Video stabilized: {output_filename}")
+        except Exception as stab_err:
+            logger.warning(f"⚠️ Stabilization failed, converting without it: {stab_err}")
+            cap = cv2.VideoCapture(temp_path)
+            w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+            out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'avc1'), fps, (w, h))
+            if not out.isOpened(): out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret: break
+                out.write(frame)
+            cap.release(); out.release()
+    finally:
         if os.path.exists(temp_path): os.remove(temp_path)
-        conn = psycopg2.connect(**DB_CONFIG)
-        cur = conn.cursor()
-        cur.execute("UPDATE cameras SET rtsp_url = %s WHERE id = %s", (f"uploads/{output_filename}", camera_db_id))
-        conn.commit(); cur.close(); conn.close()
-    except Exception as e: print(f"Background Err: {e}")
+        try:
+            conn = psycopg2.connect(**DB_CONFIG)
+            cur = conn.cursor()
+            cur.execute("UPDATE cameras SET rtsp_url = %s WHERE id = %s", (f"uploads/{output_filename}", camera_db_id))
+            conn.commit(); cur.close(); conn.close()
+        except Exception as db_err: logger.error(f"DB update error: {db_err}")
 
 @app.get("/cameras")
 async def get_cameras():
@@ -273,6 +336,17 @@ async def get_cameras():
         return [dict(row) for row in rows]
     except Exception as e: return {"error": str(e)}
 
+@app.get("/cameras/{camera_db_id}")
+async def get_camera(camera_db_id: int):
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute("SELECT * FROM cameras WHERE id = %s", (camera_db_id,))
+        row = cur.fetchone(); cur.close(); conn.close()
+        if not row: return {"error": "Camera not found"}
+        return dict(row)
+    except Exception as e: return {"error": str(e)}
+
 @app.post("/cameras/{camera_db_id}/upload-video")
 async def upload_camera_video(camera_db_id: int, background_tasks: BackgroundTasks, file: UploadFile = File(...)):
     try:
@@ -281,7 +355,7 @@ async def upload_camera_video(camera_db_id: int, background_tasks: BackgroundTas
         output_filename = f"cam_{camera_db_id}_{int(time.time())}.mp4"
         output_path = os.path.join(UPLOAD_DIR, output_filename)
         background_tasks.add_task(convert_video_task, camera_db_id, temp_path, output_path, output_filename)
-        return {"status": "processing"}
+        return {"status": "processing", "url": f"/uploads/{output_filename}"}
     except Exception as e: return {"status": "error", "message": str(e)}
 
 @app.delete("/cameras/{camera_db_id}/video")
@@ -292,7 +366,7 @@ async def delete_camera_video(camera_db_id: int):
         cur.execute("SELECT rtsp_url FROM cameras WHERE id = %s", (camera_db_id,))
         row = cur.fetchone()
         if row and row['rtsp_url']:
-            abs_p = os.path.join(BASE_DIR, "..", row['rtsp_url'])
+            abs_p = os.path.join(UPLOAD_DIR, os.path.basename(row['rtsp_url']))
             if os.path.exists(abs_p): os.remove(abs_p)
             cur.execute("UPDATE cameras SET rtsp_url = NULL WHERE id = %s", (camera_db_id,))
             conn.commit()
@@ -342,9 +416,14 @@ async def update_frame(request: Request):
     try:
         contents = await request.body()
         img = cv2.imdecode(np.frombuffer(contents, np.uint8), cv2.IMREAD_COLOR)
-        if img is not None: latest_frame = img
+        if img is not None: 
+            latest_frame = img
+        else:
+            logger.warning("⚠️ update_frame: Decoded image is None!")
         return {"status": "ok"}
-    except: return {"status": "error"}
+    except Exception as e:
+        logger.error(f"❌ update_frame error: {e}")
+        return {"status": "error"}
 
 async def frame_generator():
     global latest_frame
@@ -365,26 +444,75 @@ async def video_feed():
 
 @app.post("/set-roi")
 async def set_roi(config: ROIConfig):
-    with open(CONFIG_FILE, "w") as f: json.dump(config.model_dump(), f, indent=2)
+    if config.camera_id is not None:
+        target_file = os.path.join(DATA_DIR, f"roi_config_{config.camera_id}.json")
+    else:
+        target_file = CONFIG_FILE
+    with open(target_file, "w") as f: json.dump(config.model_dump(), f, indent=2)
     return {"status": "success"}
 
 @app.post("/set-roi-reference")
-async def set_roi_reference(file: UploadFile = File(...)):
+async def set_roi_reference(camera_id: Optional[int] = None, file: UploadFile = File(...)):
     try:
-        ref_path = os.path.join(DATA_DIR, "roi_reference.jpg")
+        if camera_id is not None:
+            filename = f"roi_reference_{camera_id}.jpg"
+        else:
+            filename = "roi_reference.jpg"
+        ref_path = os.path.join(DATA_DIR, filename)
         with open(ref_path, "wb") as buffer: shutil.copyfileobj(file.file, buffer)
-        return {"status": "success", "url": "/static-data/roi_reference.jpg"}
+        return {"status": "success", "url": f"/static-data/{filename}"}
     except Exception as e: return {"status": "error", "message": str(e)}
 
 @app.get("/get-roi")
-async def get_roi():
-    ref_exists = os.path.exists(os.path.join(DATA_DIR, "roi_reference.jpg"))
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE, "r") as f: 
+async def get_roi(camera_id: Optional[int] = None):
+    if camera_id is not None:
+        ref_filename = f"roi_reference_{camera_id}.jpg"
+        config_path = os.path.join(DATA_DIR, f"roi_config_{camera_id}.json")
+    else:
+        ref_filename = "roi_reference.jpg"
+        config_path = CONFIG_FILE
+        
+    ref_exists = os.path.exists(os.path.join(DATA_DIR, ref_filename))
+    
+    # Try to generate reference frame dynamically if it doesn't exist
+    if camera_id is not None and not ref_exists:
+        try:
+            conn = psycopg2.connect(**DB_CONFIG)
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute("SELECT rtsp_url FROM cameras WHERE id = %s", (camera_id,))
+            row = cur.fetchone()
+            cur.close(); conn.close()
+            if row and row['rtsp_url']:
+                if row['rtsp_url'].startswith("uploads/"):
+                    video_to_use = os.path.join(UPLOAD_DIR, row['rtsp_url'].replace("uploads/", ""))
+                else:
+                    video_to_use = os.path.join(BASE_DIR, "..", row['rtsp_url'])
+                
+                if os.path.exists(video_to_use):
+                    cap = cv2.VideoCapture(video_to_use)
+                    ret, frame = cap.read()
+                    if ret and frame is not None:
+                        ref_path = os.path.join(DATA_DIR, ref_filename)
+                        cv2.imwrite(ref_path, frame)
+                        ref_exists = True
+                    cap.release()
+        except Exception as e:
+            logger.error(f"Error generating dynamic reference frame: {e}")
+            
+    if os.path.exists(config_path):
+        with open(config_path, "r") as f: 
             data = json.load(f)
             data["has_reference"] = ref_exists
             return data
-    return {"roi_y": None, "roi_x": None, "traffic_light_box": None, "vehicle_zone": None, "scale": 1.0, "has_reference": ref_exists}
+            
+    if camera_id is not None and os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE, "r") as f:
+            data = json.load(f)
+            data["has_reference"] = ref_exists
+            data["camera_id"] = camera_id
+            return data
+            
+    return {"roi_y": None, "roi_x": None, "traffic_light_box": None, "vehicle_zone": None, "scale": 1.0, "has_reference": ref_exists, "camera_id": camera_id}
 
 @app.post("/start-detection")
 async def start_detection(config: ROIConfig):
@@ -401,7 +529,7 @@ async def start_detection(config: ROIConfig):
     if not video_to_use or not os.path.exists(video_to_use):
         return {"status": "error", "message": "Video not found"}
 
-    cmd = ["python3", "vehicle_detection_main.py", "--video", video_to_use]
+    cmd = [sys.executable, "vehicle_detection_main.py", "--video", video_to_use]
     if config.camera_id: cmd.extend(["--camera_db_id", str(config.camera_id)])
     if config.roi_y is not None: cmd.extend(["--roi_y", str(config.roi_y)])
     if config.roi_x is not None: cmd.extend(["--roi_x", str(config.roi_x)])
@@ -427,6 +555,34 @@ DB_CONFIG = {
     "password": os.getenv("DB_PASS", "traffic_pass"),
     "port":     os.getenv("DB_PORT", "5432")
 }
+
+@app.on_event("startup")
+async def run_migrations():
+    """Add new image columns to violations table if they don't exist yet."""
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        cur = conn.cursor()
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='violations' AND column_name='crop_image_path') THEN
+                    ALTER TABLE violations ADD COLUMN crop_image_path TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='violations' AND column_name='context_image_path') THEN
+                    ALTER TABLE violations ADD COLUMN context_image_path TEXT;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='violations' AND column_name='plate_image_path') THEN
+                    ALTER TABLE violations ADD COLUMN plate_image_path TEXT;
+                END IF;
+            END
+            $$;
+        """)
+        conn.commit()
+        cur.close()
+        conn.close()
+        logger.info("✅ DB migration: image columns ready")
+    except Exception as e:
+        logger.warning(f"⚠️ Migration skipped (DB may not be ready): {e}")
 
 if __name__ == "__main__":
     import uvicorn

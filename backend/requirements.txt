@@ -4,4 +4,5 @@ scikit-image
 tensorflow>1.4.0
 opencv-python
 packaging
+python-vidstab
 
