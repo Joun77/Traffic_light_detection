@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { DashboardShell } from "@/components/dashboard-shell"
 import { UploadCloud, Settings2, Save, ArrowLeft, Loader2, Target, CheckCircle2, Image as ImageIcon, RefreshCcw, PlayCircle, Info, Camera, MapPin } from "lucide-react"
@@ -20,7 +20,7 @@ interface CCTV {
   rtsp_url?: string
 }
 
-export default function UploadRoiPage() {
+function UploadRoiContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [step, setStep] = useState<Step>("UPLOAD")
@@ -44,7 +44,8 @@ export default function UploadRoiPage() {
           const res = await fetch("http://localhost:8000/cameras")
           if (res.ok) {
             const data = await res.json()
-            const activeCams = data.filter((c: CCTV) => c.is_active)
+            const safeData = Array.isArray(data) ? data : []
+            const activeCams = safeData.filter((c: CCTV) => c.is_active)
             setCameras(activeCams)
             
             const camParam = searchParams.get("camera")
@@ -533,3 +534,12 @@ export default function UploadRoiPage() {
     </DashboardShell>
   )
 }
+
+export default function UploadRoiPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center text-muted-foreground">ກຳລັງໂຫຼດ...</div>}>
+      <UploadRoiContent />
+    </Suspense>
+  )
+}
+

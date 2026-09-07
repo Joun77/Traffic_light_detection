@@ -53,7 +53,11 @@ export default function CamerasPage() {
       const response = await fetch("http://localhost:8000/cameras")
       if (response.ok) {
         const data = await response.json()
-        setCameras(data)
+        if (Array.isArray(data)) {
+          setCameras(data)
+        } else {
+          setCameras([])
+        }
       }
     } catch (error) { console.error("Fetch error:", error) }
     finally { setLoading(false) }

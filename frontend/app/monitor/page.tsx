@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, Suspense } from "react"
 import { DashboardShell } from "@/components/dashboard-shell"
 import { StopCircle, RotateCcw, Eye, Activity, ShieldAlert, CheckCircle2, ChevronDown, Camera, Printer, Play, X, ZoomIn, ZoomOut, Maximize2, ScanLine, FileImage } from "lucide-react"
 import { useRouter, useSearchParams } from "next/navigation"
@@ -18,7 +18,7 @@ interface CCTV {
   is_active: boolean
 }
 
-export default function MonitorPage() {
+function MonitorContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [mounted, setMounted] = useState(false)
@@ -50,8 +50,9 @@ export default function MonitorPage() {
       try {
         const res = await fetch("http://localhost:8000/cameras")
         if (res.ok) {
-          const data: CCTV[] = await res.json()
-          const activeOnes = data.filter(c => c.is_active)
+          const data = await res.json()
+          const safeData: CCTV[] = Array.isArray(data) ? data : []
+          const activeOnes = safeData.filter(c => c.is_active)
           setCameras(activeOnes)
           const cameraParam = searchParams.get("camera")
           const target = cameraParam
@@ -460,5 +461,13 @@ export default function MonitorPage() {
         description="ທ່ານແນ່ໃຈຫຼືບໍ່ວ່າຕ້ອງການຢຸດການເຮັດງານຂອງ AI?" 
       />
     </DashboardShell>
+  )
+}
+
+export default function MonitorPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center text-muted-foreground">ກຳລັງໂຫຼດ...</div>}>
+      <MonitorContent />
+    </Suspense>
   )
 }

@@ -234,7 +234,7 @@ async def get_violations(limit: int = 100, camera_id: Optional[int] = None, star
         return [dict(row) for row in rows]
     except Exception as e:
         logger.error(f"❌ Get violations error: {str(e)}")
-        return {"error": str(e)}
+        return []
 
 @app.get("/violation-summary")
 async def get_violation_summary(period: str = "all"):
@@ -256,7 +256,8 @@ async def get_violation_summary(period: str = "all"):
         cur.close(); conn.close()
         return {"total_violations": total, "by_type": by_type, "daily_stats": daily_stats}
     except Exception as e:
-        return {"error": str(e)}
+        logger.error(f"❌ Get violation summary error: {str(e)}")
+        return {"total_violations": 0, "by_type": [], "daily_stats": []}
 
 @app.delete("/violations/{violation_id}")
 async def delete_violation(violation_id: int):
@@ -334,7 +335,9 @@ async def get_cameras():
         cur.execute("SELECT * FROM cameras ORDER BY id ASC")
         rows = cur.fetchall(); cur.close(); conn.close()
         return [dict(row) for row in rows]
-    except Exception as e: return {"error": str(e)}
+    except Exception as e:
+        logger.error(f"❌ Get cameras error: {str(e)}")
+        return []
 
 @app.get("/cameras/{camera_db_id}")
 async def get_camera(camera_db_id: int):
@@ -345,7 +348,9 @@ async def get_camera(camera_db_id: int):
         row = cur.fetchone(); cur.close(); conn.close()
         if not row: return {"error": "Camera not found"}
         return dict(row)
-    except Exception as e: return {"error": str(e)}
+    except Exception as e:
+        logger.error(f"❌ Get camera {camera_db_id} error: {str(e)}")
+        return {"error": str(e)}
 
 @app.post("/cameras/{camera_db_id}/upload-video")
 async def upload_camera_video(camera_db_id: int, background_tasks: BackgroundTasks, file: UploadFile = File(...)):

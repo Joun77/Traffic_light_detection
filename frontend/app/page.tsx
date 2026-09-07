@@ -91,12 +91,29 @@ export default function HomePage() {
         fetch("http://localhost:8000/violation-summary?period=all"),
         fetch("http://localhost:8000/cameras"),
       ])
-      if (wRes.ok) setSummaryWeek(await wRes.json())
-      if (mRes.ok) setSummaryMonth(await mRes.json())
-      if (aRes.ok) setSummaryAll(await aRes.json())
-      if (camRes.ok) setCameras(await camRes.json())
+      if (wRes.ok) {
+        const wData = await wRes.json()
+        if (wData && !wData.error) setSummaryWeek(wData)
+      }
+      if (mRes.ok) {
+        const mData = await mRes.json()
+        if (mData && !mData.error) setSummaryMonth(mData)
+      }
+      if (aRes.ok) {
+        const aData = await aRes.json()
+        if (aData && !aData.error) setSummaryAll(aData)
+      }
+      if (camRes.ok) {
+        const camData = await camRes.json()
+        if (Array.isArray(camData)) {
+          setCameras(camData)
+        } else {
+          setCameras([])
+        }
+      }
     } catch (err) {
       console.error("Dashboard fetch error:", err)
+      setCameras([])
     } finally {
       setLoading(false)
     }
@@ -106,10 +123,11 @@ export default function HomePage() {
     fetchData()
   }, [])
 
-  const activeCamerasCount = cameras.filter((c) => c.is_active).length
+  const safeCameras = Array.isArray(cameras) ? cameras : []
+  const activeCamerasCount = safeCameras.filter((c) => c.is_active).length
   const currentSummary = filterPeriod === "week" ? summaryWeek : summaryMonth
   const periodDays = filterPeriod === "week" ? 7 : 30
-  const avgPerDay = currentSummary
+  const avgPerDay = currentSummary && currentSummary.total_violations
     ? Math.round(currentSummary.total_violations / periodDays)
     : 0
 
@@ -131,14 +149,14 @@ export default function HomePage() {
     {
       label: "ກ້ອງທີ່ໃຊ້ງານ",
       value: activeCamerasCount,
-      sublabel: `ຈາກທັງໝົດ ${cameras.length} ກ້ອງ`,
+      sublabel: `ຈາກທັງໝົດ ${safeCameras.length} ກ້ອງ`,
       icon: Video,
       colorClass: "bg-emerald-500/10 border-emerald-500/20 text-emerald-400",
     },
     {
       label: "ກ້ອງທັງໝົດ",
-      value: cameras.length,
-      sublabel: `ປິດໃຊ້ງານ ${cameras.length - activeCamerasCount} ກ້ອງ`,
+      value: safeCameras.length,
+      sublabel: `ປິດໃຊ້ງານ ${safeCameras.length - activeCamerasCount} ກ້ອງ`,
       icon: TrendingUp,
       colorClass: "bg-sky-500/10 border-sky-500/20 text-sky-400",
     },
@@ -231,7 +249,7 @@ export default function HomePage() {
           loading={loading}
           columnCount={5}
         >
-          {cameras.map((cam, index) => (
+          {safeCameras.map((cam, index) => (
             <DataTableRow key={cam.id}>
 
               {/* ລຳດັບ */}
